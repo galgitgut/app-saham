@@ -23,7 +23,9 @@
     chart: null,
     chartSym: null,
     chartBars: 252,
-    archiveLoaded: false,
+    archDB: new Data.PriceDB(), // potongan arsip per saham (hanya yang pernah dibuka)
+    archDone: new Set(),
+    archiveMode: false,
     abDB: null,
   };
 
@@ -45,10 +47,10 @@
   const toInputDate = (d) => `${ymd(d)}-${String(Math.floor(d / 100) % 100).padStart(2, '0')}-${String(d % 100).padStart(2, '0')}`;
   const fromInputDate = (s) => Number(s.replace(/-/g, ''));
 
-  function switchTab(name) {
+  function switchTab(name, sym) {
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${name}`));
-    if (name === 'chart' && state.chartSym) showChart(state.chartSym);
+    if (name === 'chart' && (sym || state.chartSym)) showChart(sym || state.chartSym);
   }
 
   // ------------------------------------------------------------------ memuat data
@@ -84,7 +86,8 @@
     // data: file harian dulu (untuk tahu tahun mana yang tersentuh), lalu file tahun, lalu terapkan file harian
     state.db = new Data.PriceDB();
     state.loadedYears = new Set();
-    state.archiveLoaded = false;
+    state.archDB = new Data.PriceDB();
+    state.archDone = new Set();
     state.files.tahun = (await state.gh.list(REPO_DIRS.tahun)).filter((f) => /^\d{4}\.json\.gz$/.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
     state.files.delta = (await state.gh.list(REPO_DIRS.delta)).filter((f) => f.name.endsWith('.json.gz')).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -118,19 +121,46 @@
     if (!state.files.tahun.length) status('Database kosong. Buka tab Data → Konversi database AmiBroker.');
   }
 
-  /** Muat tahun-tahun arsip (untuk chart jangka panjang). */
-  async function loadArchive() {
-    if (state.archiveLoaded) return;
-    const older = state.files.tahun.filter((f) => !state.loadedYears.has(Number(f.name.slice(0, 4)))).reverse();
-    for (const f of older) {
-      status(`Mengunduh arsip ${f.name.slice(0, 4)}…`);
-      state.db.loadYear(await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha)));
-      state.loadedYears.add(Number(f.name.slice(0, 4)));
+  /**
+   * Arsip untuk chart jangka panjang.
+   * File tahun lama berisi SEMUA saham, jadi tidak dimuat utuh (bisa ±1 GB memori untuk 30 tahun).
+   * Setiap file dibuka satu per satu, hanya saham yang diminta (dan ^JKSE untuk RRG) yang diambil,
+   * lalu sisanya dibuang. File yang sudah diunduh tersimpan di perangkat, jadi unduhan hanya sekali.
+   */
+  async function loadArchiveFor(sym) {
+    const want = [sym, '^JKSE'].filter((x) => !state.archDone.has(x));
+    if (!want.length) return true;
+    const older = state.files.tahun.filter((f) => Number(f.name.slice(0, 4)) * 10000 < state.activeFrom);
+    if (!older.length) return true;
+    let missing = 0;
+    for (const f of older) if (!(await state.gh.isCached(f.path, f.sha))) missing += f.size;
+    if (missing > 0 && !confirm(`Arsip perlu diunduh sekali (±${Math.round(missing / 1048576)} MB) dan disimpan di perangkat ini. Lanjut?`)) return false;
+    let k = 0;
+    for (const f of [...older].reverse()) {
+      k++;
+      status(`Membaca arsip ${f.name.slice(0, 4)} (${k}/${older.length})…`);
+      const obj = await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha));
+      const s = {};
+      for (const x of want) if (obj.s[x]) s[x] = obj.s[x];
+      state.archDB.loadYear({ names: {}, s });
       await tick();
     }
-    state.db.applyCorrections(state.koreksi);
-    state.archiveLoaded = true;
-    status('Arsip dimuat.');
+    state.archDB.applyCorrections(state.koreksi);
+    want.forEach((x) => state.archDone.add(x));
+    status(`Arsip ${sym} dimuat.`);
+    return true;
+  }
+
+  /** Seri harga: arsip (kalau diminta) + data aktif. */
+  function chartSeries(sym, withArchive) {
+    const act = state.db.series(sym, state.activeFrom);
+    if (!withArchive) return act;
+    const old = state.archDB.series(sym, 0, state.activeFrom - 1);
+    if (!old || !old.date.length) return act;
+    const cat = (a, b, T) => { const o = new T(a.length + b.length); o.set(a); o.set(b, a.length); return o; };
+    const out = {};
+    for (const k of Object.keys(act)) out[k] = cat(old[k], act[k], act[k].constructor);
+    return out;
   }
 
   function lastIdxDate() {
@@ -183,23 +213,31 @@
     const t0 = performance.now();
     const ctx = { db: state.db, engines: state.engines, base: baseSeries(state.activeFrom), exclude: state.exclude, cache: state.cache, fromDate: state.activeFrom };
     const res = Screening.run(ctx, key, date);
-    Screening.render($('scr-table'), state.engines[key], res, (sym) => { state.chartSym = sym; switchTab('chart'); });
+    Screening.render($('scr-table'), state.engines[key], res, (sym) => switchTab('chart', sym));
     $('scr-info').textContent = `${res.rows.length} lolos dari ${res.universe} saham · ${Math.round(performance.now() - t0)} ms`;
   }
 
   // ------------------------------------------------------------------ chart
 
-  function showChart(sym) {
+  function setRange(r) {
+    state.chartBars = r;
+    state.archiveMode = r === -1;
+    document.querySelectorAll('#ch-range button').forEach((x) => x.classList.toggle('on', Number(x.dataset.r) === r));
+  }
+
+  async function showChart(sym) {
     sym = sym.trim().toUpperCase();
+    // pindah saham → kembali ke 1Y agar arsip saham lain tidak otomatis diunduh
+    if (sym !== state.chartSym && state.archiveMode) setRange(252);
     if (!state.db.get(sym)) { status(`Simbol ${sym} tidak ada di database.`, true); return; }
     state.chartSym = sym;
     $('ch-sym').value = sym;
     if (!state.chart) {
       state.chart = new ChartView({ price: $('ch-price'), nbsa: $('ch-nbsa'), nbsaInfo: $('ch-nbsa-info'), title: $('ch-title'), rrg: $('ch-rrg'), rrgInfo: $('rrg-info') });
     }
-    const from = state.archiveLoaded ? 0 : state.activeFrom;
-    const s = state.db.series(sym, from);
-    const base = baseSeries(0);
+    if (state.archiveMode && !(await loadArchiveFor(sym))) setRange(252);
+    const s = chartSeries(sym, state.archiveMode);
+    const base = chartSeries('^JKSE', state.archiveMode) || { date: new Int32Array(0), C: new Float64Array(0) };
     const E = state.engines;
     let signals = null;
     if (E.binarsaujana && s.C.length >= E.binarsaujana.minBars) {
@@ -208,7 +246,7 @@
     }
     const nbsa = E.nbsa ? E.nbsa.run(s) : null;
     const rrg = E.rrg ? { ...E.rrg.run(s, { base }), param: E.rrg.param } : null;
-    state.chart.show({ sym, name: state.db.names[sym], s, signals, nbsa, rrg, bars: state.chartBars });
+    state.chart.show({ sym, name: state.db.names[sym], s, signals, nbsa, rrg, bars: state.archiveMode ? 0 : state.chartBars });
   }
 
   // ------------------------------------------------------------------ import CSV
@@ -361,14 +399,20 @@
   $('ch-range').addEventListener('click', async (e) => {
     const b = e.target.closest('button');
     if (!b) return;
-    document.querySelectorAll('#ch-range button').forEach((x) => x.classList.toggle('on', x === b));
-    state.chartBars = Number(b.dataset.r);
-    if (state.chartBars === -1) { await loadArchive(); state.chartBars = 0; }
+    setRange(Number(b.dataset.r));
     if (state.chartSym) showChart(state.chartSym);
   });
   $('csv-file').addEventListener('change', (e) => { const files = [...e.target.files]; e.target.value = ''; onCsvFiles(files); });
   $('csv-save').addEventListener('click', savePending);
   $('btn-consolidate').addEventListener('click', consolidate);
+  $('btn-clear-archive').addEventListener('click', async () => {
+    const older = state.files.tahun.filter((f) => Number(f.name.slice(0, 4)) * 10000 < state.activeFrom);
+    await state.gh.uncache(older);
+    state.archDB = new Data.PriceDB();
+    state.archDone = new Set();
+    if (state.archiveMode) setRange(252);
+    status(`Arsip (${older.length} file tahun) dihapus dari perangkat ini.`);
+  });
   $('ab-folder').addEventListener('change', (e) => onAmiBrokerFolder([...e.target.files]));
   $('ab-save').addEventListener('click', saveAmiBroker);
   $('set-save').addEventListener('click', saveCfg);

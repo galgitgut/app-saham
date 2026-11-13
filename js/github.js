@@ -77,6 +77,20 @@
       return new Uint8Array(buf);
     }
 
+    /** Apakah file (dengan sha ini) sudah tersimpan di perangkat? */
+    async isCached(path, sha) {
+      if (typeof caches === 'undefined') return false;
+      const cache = await caches.open(CACHE_NAME);
+      return !!(await cache.match(`https://cache.local/${path}@${sha}`));
+    }
+
+    /** Hapus salinan file tertentu dari perangkat. */
+    async uncache(items) {
+      if (typeof caches === 'undefined') return;
+      const cache = await caches.open(CACHE_NAME);
+      for (const x of items) await cache.delete(`https://cache.local/${x.path}@${x.sha}`);
+    }
+
     async getText(path) {
       const b = await this.getBytes(path);
       return b ? new TextDecoder().decode(b) : null;
