@@ -71,9 +71,16 @@
           <label class="field">Fee beli (%)<input id="pc-feebuy" type="number" step="0.01"></label>
           <label class="field">Fee jual (%)<input id="pc-feesell" type="number" step="0.01"></label>
           <label class="field">Mulai mencatat keputusan<input id="pc-decide" type="date"></label>
+          <label class="field">Pemicu saham baru
+            <select id="pc-entry">
+              <option value="exrem">Buy pertama setelah Sell (seperti AmiBroker)</option>
+              <option value="raw">Setiap sinyal Buy</option>
+            </select>
+          </label>
+          <label class="field check"><input id="pc-carry" type="checkbox"> Bawa posisi tahun lalu (tahan sampai Sell, pakai kas, tanpa slot)</label>
         </div>
         <button id="pc-apply" class="primary">Terapkan</button>
-        <p class="muted">Backtest selalu mulai awal tahun berjalan. Perubahan modal hanya berlaku untuk pembelian sejak tanggal "berlaku mulai"; pembelian lama tidak diubah. Sebelum tanggal "mulai mencatat keputusan", semua sinyal dianggap dibeli (backtest murni).</p>
+        <p class="muted">Backtest selalu mulai awal tahun berjalan (reset). Posisi bawaan tahun lalu hanya ditahan sampai Sell; dana hasil jualnya kembali ke kas untuk saham baru. Perubahan modal hanya berlaku untuk pembelian sejak tanggal "berlaku mulai"; pembelian lama tidak diubah. Sebelum tanggal "mulai mencatat keputusan", semua sinyal dianggap dibeli (backtest murni).</p>
         <div id="pc-modal-list" class="log"></div>
       </details>
     </section>

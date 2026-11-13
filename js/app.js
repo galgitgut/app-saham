@@ -222,7 +222,7 @@
     const universe = new Set();
     const addSig = (sym) => {
       const res = Screening.compute(ctx, 'binarsaujana', sym);
-      if (res) sig.set(sym, { date: res.s.date, C: res.s.C, P: res.s.P, buyRaw: res.r.buyRaw, sellRaw: res.r.sellRaw, power: res.r.positionScore });
+      if (res) sig.set(sym, { date: res.s.date, C: res.s.C, P: res.s.P, buyRaw: res.r.buyRaw, buyFirst: res.r.buy, sellRaw: res.r.sellRaw, power: res.r.positionScore });
       return !!res;
     };
     for (const sym of state.db.symbols()) {
@@ -230,9 +230,8 @@
       if (addSig(sym)) universe.add(sym);
     }
     for (const m of state.book.manual) if (!sig.has(m.sym) && state.db.get(m.sym)) addSig(m.sym);
-    const start = Math.floor(last / 10000) * 10000 + 101; // selalu dari awal tahun berjalan
-    const run = { ...cfg, start, decideFrom: cfg.decideFrom || last };
-    state.porto = Portfolio.simulate({ sig, universe, cfg: run, book: state.book, lastDate: last });
+    const run = { ...cfg, decideFrom: cfg.decideFrom || last }; // tahun berjalan selalu mulai 1 Jan
+    state.porto = Portfolio.simulateYear({ sig, universe, cfg: run, book: state.book, lastDate: last });
     PortfolioUI.render(state.porto, { decision: (k) => state.book.decisions[k], histFilter: state.histFilter });
     if (!$('mn-date').value) $('mn-date').value = toInputDate(last);
     renderManualList();
@@ -274,6 +273,8 @@
     $('pc-feebuy').value = c.feeBuy;
     $('pc-feesell').value = c.feeSell;
     $('pc-decide').value = toInputDate(c.decideFrom || last);
+    $('pc-entry').value = c.entryMode;
+    $('pc-carry').checked = c.carry;
     $('pc-modal-list').textContent = c.modal.length
       ? 'Riwayat modal:\n' + [...c.modal].sort((a, b) => a.d - b.d).map((m) => `  mulai ${Screening.fmtDate(m.d)}: Rp ${Math.round(m.value).toLocaleString('id-ID')}`).join('\n')
       : '';
@@ -294,6 +295,8 @@
     c.feeBuy = Number($('pc-feebuy').value);
     c.feeSell = Number($('pc-feesell').value);
     c.decideFrom = fromInputDate($('pc-decide').value) || 0;
+    c.entryMode = $('pc-entry').value;
+    c.carry = $('pc-carry').checked;
     openSettings();
     markDirty();
   }

@@ -110,6 +110,7 @@ table.grid { border-collapse: collapse; width: max-content; min-width: 100%; fon
 input.lot { width: 80px; padding: 4px 6px; }
 .edit-row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 4px 0; }
 .badge { display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 4px; background: var(--warn); color: #000; font-size: 10px; font-weight: 700; vertical-align: middle; }
+.tag.old { background: rgba(251, 191, 36, .18); color: var(--warn); }
 .tag { margin-left: 4px; padding: 0 5px; border-radius: 4px; background: rgba(34, 211, 238, .2); color: var(--accent2); font-size: 10px; font-weight: 600; }
 
 /* chart */
@@ -125,3 +126,4 @@ input.lot { width: 80px; padding: 4px 6px; }
 .ch-info b { color: var(--text); font-weight: 600; }
 .rrg-head { display: flex; justify-content: space-between; gap: 8px; margin: 12px 0 4px; font-weight: 700; }
 canvas.rrg { width: 100%; height: 340px; border: 1px solid var(--line); border-radius: 10px; background: #000; display: block; }
+.field.check { flex-direction: row; align-items: center; gap: 8px; grid-column: 1 / -1; }

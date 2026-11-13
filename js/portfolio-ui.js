@@ -45,7 +45,7 @@
           <button class="ok small" data-approve="${add.key}" data-price="${add.price}">Setuju</button>
           <button class="no small" data-skip="${add.key}">Lewati</button></div>`;
       }
-      const buys = ev.filter((e) => e.sym === p.sym && e.lots > 0 && e.d >= p.entry && /BELI|TAMBAH/.test(e.type)).reverse();
+      const buys = [...ev, ...(r.prevEvents || [])].filter((e) => e.sym === p.sym && e.lots > 0 && e.d >= p.entry && /BELI|TAMBAH/.test(e.type)).reverse();
       const editor = `<tr class="editor" data-editor="${p.sym}" hidden><td colspan="10">
         ${buys.map((e) => {
           const key = e.type === 'BELI MANUAL' ? `manual:${e.id}` : `${e.d}|${e.sym}|${e.type === 'BELI' ? 'NEW' : 'ADD'}`;
@@ -56,7 +56,7 @@
         }).join('')}
         <p class="muted">Isi 0 lot kalau ternyata tidak jadi beli.</p></td></tr>`;
       return `<tr class="${add ? 'hl-add' : ''}">
-        <td><a href="#" data-chart="${p.sym}">${p.sym}</a>${p.source === 'manual' ? '<span class="tag">manual</span>' : ''}${p.provisional ? '<span class="badge">S</span>' : ''}</td>
+        <td><a href="#" data-chart="${p.sym}">${p.sym}</a>${p.source === 'manual' ? '<span class="tag">manual</span>' : p.source === 'bawaan' ? `<span class="tag old">bawaan ${Math.floor(p.entry / 10000)}</span>` : ''}${p.provisional ? '<span class="badge">S</span>' : ''}</td>
         <td>${tgl(p.entry)}</td><td>${num(p.lots)}</td><td>${num(p.avg, 0)}</td><td>${num(p.close)}</td>
         <td class="${cls(p.chg)}">${pct(p.chg)}</td><td class="${cls(p.pl)}">${pct(p.plPct)}</td><td class="${cls(p.pl)}">${rp(p.pl)}</td>
         <td>${p.source === 'manual' ? '-' : `${p.porsi}%`}</td><td class="txt">${action}</td></tr>${editor}`;

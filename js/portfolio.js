@@ -22,7 +22,7 @@
 (function (global) {
   'use strict';
 
-  const DEFAULT_CFG = { slots: 9, firstPct: 60, addPct: 20, feeBuy: 0.18, feeSell: 0.28, modal: [], start: 0, decideFrom: 0 };
+  const DEFAULT_CFG = { slots: 9, firstPct: 60, addPct: 20, feeBuy: 0.18, feeSell: 0.28, modal: [], start: 0, decideFrom: 0, entryMode: 'exrem', carry: true };
 
   /** Modal yang berlaku pada tanggal d. */
   function modalAt(cfg, d) {
@@ -71,6 +71,7 @@
     const close = (sym, d) => { const i = at(sym, d); return i === undefined ? NaN : o.sig.get(sym).C[i]; };
 
     const pos = new Map(); // simbol → posisi terbuka
+    for (const c of o.carry || []) pos.set(c.sym, { ...c, source: 'bawaan' });
     const events = [];
     const pending = []; // keputusan yang ditunggu (tanggal terakhir)
     let candidates = []; // kandidat Buy di tanggal terakhir
@@ -79,10 +80,12 @@
 
     const invested = () => { let x = 0; for (const p of pos.values()) x += p.cost; return x; };
     const systemCount = () => { let n = 0; for (const p of pos.values()) if (p.source === 'system') n++; return n; };
+    // pemicu masuk baru: 'exrem' = Buy pertama setelah Sell (seperti AmiBroker), 'raw' = setiap Buy
+    const entrySig = (s) => (cfg.entryMode === 'raw' ? s.buyRaw : s.buyFirst || s.buyRaw);
 
     function undecidedStatus(d) {
       if (d < cfg.decideFrom) return 'auto';
-      if (d === lastDate) return 'pending';
+      if (d === lastDate && !o.noPending) return 'pending';
       return 'tidak diputuskan';
     }
 
@@ -156,7 +159,7 @@
       for (const sym of [...pos.keys()]) {
         const p = pos.get(sym);
         const i = at(sym, d);
-        if (i === undefined || !o.sig.get(sym).buyRaw[i] || p.entry >= d) continue;
+        if (p.source === 'bawaan' || i === undefined || !o.sig.get(sym).buyRaw[i] || p.entry >= d) continue;
         const key = `${d}|${sym}|ADD`;
         handled.add(key);
         const dec = book.decisions[key];
@@ -177,7 +180,7 @@
       for (const sym of o.universe) {
         if (pos.has(sym)) continue;
         const i = at(sym, d);
-        if (i === undefined || !o.sig.get(sym).buyRaw[i]) continue;
+        if (i === undefined || !entrySig(o.sig.get(sym))[i]) continue;
         cands.push({ sym, power: o.sig.get(sym).power[i], price: o.sig.get(sym).C[i], provisional: o.sig.get(sym).P ? o.sig.get(sym).P[i] === 1 : false });
       }
       cands.sort((a, b) => b.power - a.power);
@@ -260,7 +263,26 @@
     return NaN;
   }
 
-  const Portfolio = { simulate, lotsFor, modalAt, DEFAULT_CFG };
+  /**
+   * Simulasi tahun berjalan (reset tiap awal tahun). Kalau cfg.carry aktif, posisi yang masih terbuka
+   * di akhir tahun lalu dibawa sebagai "bawaan": tetap dipegang sampai ada Sell, memakai kas,
+   * tetapi tidak memakai slot dan tidak mendapat tambahan porsi.
+   */
+  function simulateYear(o) {
+    const cfg = { ...DEFAULT_CFG, ...o.cfg };
+    const year = Math.floor(o.lastDate / 10000);
+    let carry = [];
+    let prev = null;
+    if (cfg.carry) {
+      prev = simulate({ ...o, cfg: { ...cfg, start: (year - 1) * 10000 + 101 }, lastDate: (year - 1) * 10000 + 1231, carry: [], noPending: true });
+      carry = prev.positions.map((p) => ({ sym: p.sym, lots: p.lots, cost: p.cost, porsi: p.porsi, entry: p.entry, buys: p.buys }));
+    }
+    const r = simulate({ ...o, cfg: { ...cfg, start: year * 10000 + 101 }, carry });
+    r.prevEvents = prev ? prev.events : [];
+    return r;
+  }
+
+  const Portfolio = { simulate, simulateYear, lotsFor, modalAt, DEFAULT_CFG };
   global.Portfolio = Portfolio;
   if (typeof module !== 'undefined' && module.exports) module.exports = Portfolio;
 })(typeof window !== 'undefined' ? window : globalThis);
