@@ -1,0 +1,71 @@
+/* Tema gelap, mirip suasana AmiBroker. Ramah layar HP. */
+:root {
+  --bg: #0d1117;
+  --panel: #161b22;
+  --line: #30363d;
+  --text: #e6edf3;
+  --muted: #8b949e;
+  --up: #3fb950;
+  --down: #f85149;
+  --accent: #2f81f7;
+  --warn: #d29922;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg); color: var(--text); font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+button, input, select { font: inherit; color: inherit; }
+
+.topbar { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 12px; padding-top: max(10px, env(safe-area-inset-top)); background: var(--panel); border-bottom: 1px solid var(--line); }
+.brand { font-weight: 700; }
+.status { color: var(--muted); font-size: 12px; text-align: right; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status.err { color: var(--down); }
+
+.tabs { display: flex; background: var(--panel); border-bottom: 1px solid var(--line); position: sticky; top: 0; z-index: 5; }
+.tab { flex: 1; padding: 10px 4px; background: none; border: 0; border-bottom: 2px solid transparent; color: var(--muted); cursor: pointer; }
+.tab.active { color: var(--text); border-bottom-color: var(--accent); }
+
+main { padding: 10px; padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+.panel { display: none; }
+.panel.active { display: block; }
+
+.toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
+.toolbar label { display: flex; gap: 6px; align-items: center; color: var(--muted); }
+input, select { background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+button { background: #21262d; border: 1px solid var(--line); border-radius: 6px; padding: 6px 12px; cursor: pointer; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button:disabled { opacity: .45; cursor: default; }
+.muted { color: var(--muted); font-size: 12px; }
+
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+.card h3 { margin: 0 0 6px; font-size: 15px; }
+.field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; color: var(--muted); }
+.log { font: 12px/1.5 ui-monospace, Menlo, Consolas, monospace; white-space: pre-wrap; color: var(--muted); margin: 8px 0; max-height: 260px; overflow: auto; }
+
+/* Tabel hasil Explore */
+.table-wrap { overflow: auto; max-height: calc(100vh - 170px); border: 1px solid var(--line); border-radius: 6px; }
+table.grid { border-collapse: collapse; width: max-content; min-width: 100%; font-variant-numeric: tabular-nums; }
+.grid th, .grid td { padding: 5px 8px; border-bottom: 1px solid var(--line); white-space: nowrap; text-align: right; }
+.grid th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; cursor: pointer; user-select: none; z-index: 2; }
+.grid th:first-child, .grid td:first-child { position: sticky; left: 0; background: var(--panel); text-align: left; z-index: 1; }
+.grid th:first-child { z-index: 3; }
+.grid td.txt { text-align: left; }
+.grid td.up { color: var(--up); }
+.grid td.down { color: var(--down); }
+.grid tr:hover td { background: #1c2128; }
+.grid a { color: var(--text); text-decoration: none; font-weight: 600; }
+.grid .sig { color: var(--up); font-weight: 700; }
+.badge { display: inline-block; margin-left: 4px; padding: 0 4px; border-radius: 4px; background: var(--warn); color: #000; font-size: 10px; font-weight: 700; vertical-align: middle; }
+
+/* Chart */
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
+.seg button { border: 0; border-radius: 0; background: none; padding: 6px 10px; }
+.seg button.on { background: var(--accent); color: #fff; }
+.ch-title { font-weight: 700; margin: 4px 0; }
+.ch-title .muted { font-weight: 400; }
+.chart-box { width: 100%; border: 1px solid var(--line); border-radius: 6px; }
+.chart-box.price { height: 52vh; min-height: 280px; }
+.chart-box.sub { height: 22vh; min-height: 140px; }
+.ch-info { font-size: 12px; color: var(--muted); margin: 6px 0 4px; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+.ch-info b { color: var(--text); font-weight: 600; }
+.rrg-head { display: flex; justify-content: space-between; margin: 12px 0 4px; font-weight: 700; }
+canvas.rrg { width: 100%; height: 340px; border: 1px solid var(--line); border-radius: 6px; background: #000; display: block; }
