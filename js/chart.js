@@ -57,33 +57,69 @@
         this._info(i >= 0 ? i : this.s.date.length - 1);
       };
       this.price.subscribeCrosshairMove(onMove);
+      this.bsLines = [];
+      // pita status dari formula privat, mengikuti geser & zoom chart harga
+      this.price.timeScale().subscribeVisibleLogicalRangeChange(() => this._ribbons());
+      el.legend.addEventListener('click', (e) => {
+        const b = e.target.closest('[data-line]');
+        if (!b) return;
+        const k = Number(b.dataset.line);
+        const on = !b.classList.contains('on');
+        b.classList.toggle('on', on);
+        this.bsLines[k].applyOptions({ visible: on });
+        const vis = this._lineVis();
+        vis[b.dataset.label] = on;
+        try { localStorage.setItem('chart-lines', JSON.stringify(vis)); } catch (_) { /* biarkan */ }
+      });
       this.sub.subscribeCrosshairMove(onMove);
-      window.addEventListener('resize', () => this.s && this._rrg(this.rrgIdx));
+      window.addEventListener('resize', () => { if (this.s) { this._rrg(this.rrgIdx); this._ribbons(); } });
     }
 
     /**
      * Tampilkan satu simbol.
-     * @param o {sym, name, s (seri), signals {buy, sell} | null, nbsa (hasil formula NBSA) | null,
+     * @param o {sym, name, s (seri), bs (resep chart BinarSaujana) | null, nbsa (hasil formula NBSA) | null,
      *           rrg {x, y, param} | null, bars (jumlah bar terlihat; 0 = semua)}
      */
+    _lineVis() {
+      try { return JSON.parse(localStorage.getItem('chart-lines') || '{}'); } catch (_) { return {}; }
+    }
+
     show(o) {
       this.s = o.s;
       this.o = o;
       const s = o.s;
       const t = Array.from(s.date, toTime);
-      this.candle.setData(t.map((time, i) => ({ time, open: s.O[i], high: s.H[i], low: s.L[i], close: s.C[i] })));
+      const bs = o.bs; // resep chart dari formula privat (boleh tidak ada)
+      this.candle.setData(t.map((time, i) => {
+        const c = bs && bs.candleColor[i];
+        const bar = { time, open: s.O[i], high: s.H[i], low: s.L[i], close: s.C[i] };
+        return c ? { ...bar, color: c, wickColor: c, borderColor: c } : bar;
+      }));
+
+      // garis-garis indikator dari resep chart
+      for (const x of this.bsLines) this.price.removeSeries(x);
+      this.bsLines = [];
+      const lineVis = this._lineVis();
+      const legend = [];
+      if (bs) {
+        bs.lines.forEach((l, k) => {
+          const show = lineVis[l.label] ?? l.show;
+          const ser = this.price.addLineSeries({
+            color: l.color || '#fff', lineWidth: l.width || 1, lineType: l.step ? 1 : 0, lineStyle: l.dashed ? 2 : 0,
+            priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false, visible: show,
+          });
+          ser.setData(t.map((time, i) => (Number.isFinite(l.values[i]) ? { time, value: l.values[i], ...(l.colors ? { color: l.colors[i] } : {}) } : { time })));
+          this.bsLines.push(ser);
+          const sw = l.colors ? 'linear-gradient(90deg,#40e0d0,#ffd60a,#6366f1)' : l.color;
+          legend.push(`<button class="chip ${show ? 'on' : ''}" data-line="${k}" data-label="${l.label}"><i style="background:${sw}"></i>${l.label}</button>`);
+        });
+      }
+      this.el.legend.innerHTML = legend.join('');
       this.vol.setData(t.map((time, i) => ({
         time, value: s.V[i], color: s.C[i] >= s.O[i] ? 'rgba(63,185,80,0.4)' : 'rgba(248,81,73,0.4)',
       })));
 
-      const markers = [];
-      if (o.signals) {
-        for (let i = 0; i < t.length; i++) {
-          if (o.signals.buy[i]) markers.push({ time: t[i], position: 'belowBar', color: COLORS.up, shape: 'arrowUp', text: 'B' });
-          if (o.signals.sell[i]) markers.push({ time: t[i], position: 'aboveBar', color: COLORS.down, shape: 'arrowDown', text: 'S' });
-        }
-      }
-      this.candle.setMarkers(markers);
+      this.candle.setMarkers(bs ? bs.markers.map((m) => ({ ...m, time: t[m.i] })) : []);
 
       // panel NBSA
       for (const x of [...this.subBars, ...this.subLines]) this.sub.removeSeries(x);
@@ -107,6 +143,48 @@
       const vis = o.bars > 0 ? Math.min(o.bars, n) : n;
       this.price.timeScale().setVisibleLogicalRange({ from: n - vis, to: n + 3 });
       this._info(n - 1);
+      this._ribbons();
+    }
+
+    /** Pita warna di bawah chart, satu kotak per bar (seperti "pixel" di AFL). */
+    _ribbons() {
+      const cv = this.el.ribbon;
+      const bs = this.o && this.o.bs;
+      const rows = bs ? bs.ribbons : [];
+      cv.style.display = rows.length ? 'block' : 'none';
+      if (!rows.length) return;
+      const ctx = cv.getContext('2d');
+      const dpr = window.devicePixelRatio || 1;
+      const W = cv.clientWidth, rowH = 11, H = rows.length * rowH + 2;
+      cv.style.height = `${H}px`;
+      cv.width = W * dpr; cv.height = H * dpr;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.clearRect(0, 0, W, H);
+      const ts = this.price.timeScale();
+      const range = ts.getVisibleLogicalRange();
+      if (!range) return;
+      const n = this.s.date.length;
+      const from = Math.max(0, Math.floor(range.from)), to = Math.min(n - 1, Math.ceil(range.to));
+      const x0 = ts.logicalToCoordinate(from), x1 = ts.logicalToCoordinate(Math.min(from + 1, to));
+      const bw = Math.max(1, (x1 !== null && x0 !== null && to > from ? x1 - x0 : 6) - 1);
+      rows.forEach((row, r) => {
+        const y = 1 + r * rowH;
+        for (let i = from; i <= to; i++) {
+          const x = ts.logicalToCoordinate(i);
+          if (x === null) continue;
+          const c = row.color(i);
+          if (!c) continue;
+          ctx.fillStyle = c;
+          ctx.fillRect(x - bw / 2, y, bw, rowH - 2);
+          const b = row.border && row.border(i);
+          if (b) { ctx.strokeStyle = b; ctx.lineWidth = 1; ctx.strokeRect(x - bw / 2 + .5, y + .5, bw - 1, rowH - 3); }
+        }
+        ctx.fillStyle = 'rgba(0,0,0,.55)';
+        ctx.fillRect(0, y, 62, rowH - 2);
+        ctx.fillStyle = '#fff';
+        ctx.font = '9px system-ui';
+        ctx.fillText(row.label, 3, y + 8);
+      });
     }
 
     _info(i) {
@@ -118,6 +196,11 @@
         `<span class="muted">O</span> ${fmt(s.O[i])} <span class="muted">H</span> ${fmt(s.H[i])} ` +
         `<span class="muted">L</span> ${fmt(s.L[i])} <span class="muted">C</span> ${fmt(s.C[i])} ` +
         `<span class="${chg >= 0 ? 'up' : 'down'}" style="color:${chg >= 0 ? COLORS.up : COLORS.down}">${chg >= 0 ? '+' : ''}${fmt(chg, 2)}%</span>`;
+      if (o.bs) {
+        this.el.bsInfo.innerHTML = o.bs.info(i).map(([k, v, c]) => `<span>${k}: <b${c ? ` style="color:${c}"` : ''}>${v}</b></span>`).join('');
+      } else {
+        this.el.bsInfo.textContent = '';
+      }
       if (o.nbsa) {
         const info = o.nbsa.info(i);
         this.el.nbsaInfo.innerHTML = Object.entries(info).map(([k, v]) => `<span>${k}: <b>${v}</b></span>`).join('');

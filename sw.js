@@ -1,6 +1,6 @@
 // Service worker sederhana: app tetap terbuka walau sinyal jelek.
 // Strategi "network first": selalu coba versi terbaru, kalau gagal pakai salinan terakhir.
-const CACHE = 'app-saham-shell-v1';
+const CACHE = 'binar-saujana-shell-v2';
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (e) => e.waitUntil(self.clients.claim()));

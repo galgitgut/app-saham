@@ -1,6 +1,6 @@
 {
-  "name": "App Saham",
-  "short_name": "Saham",
+  "name": "Binar Saujana App",
+  "short_name": "Binar Saujana",
   "start_url": "./",
   "display": "standalone",
   "background_color": "#0d1117",

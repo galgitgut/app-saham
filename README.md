@@ -1,4 +1,4 @@
-# App Saham
+# Binar Saujana App
 
 Aplikasi pribadi pengganti AmiBroker: database harga, import CSV, screening, dan chart. Bisa dibuka di laptop maupun HP (bisa di-install sebagai app).
 

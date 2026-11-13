@@ -37,10 +37,49 @@
 
   // ------------------------------------------------------------------ util tampilan
 
-  function status(msg, isErr = false) {
-    const el = $('status');
+  // ---- Layar tunggu (pop-up dengan bar persentase), pesan singkat, dan dialog error
+  const Busy = {
+    active: false,
+    start(title) {
+      this.active = true;
+      $('busy-title').textContent = title;
+      this.set(0, '');
+      $('busy').hidden = false;
+    },
+    set(frac, msg) {
+      if (frac !== null && frac !== undefined) {
+        const p = Math.max(0, Math.min(100, Math.round(frac * 100)));
+        $('busy-fill').style.width = `${p}%`;
+        $('busy-pct').textContent = `${p}%`;
+      }
+      if (msg !== undefined) $('busy-msg').textContent = msg;
+    },
+    end() {
+      this.active = false;
+      $('busy').hidden = true;
+    },
+  };
+
+  let toastTimer = null;
+  function toast(msg) {
+    const el = $('toast');
     el.textContent = msg;
-    el.classList.toggle('err', isErr);
+    el.hidden = false;
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(() => { el.hidden = true; }, 3500);
+  }
+
+  function showError(msg) {
+    $('dlg-msg').textContent = msg;
+    $('dlg').hidden = false;
+  }
+
+  /** Pesan: saat menunggu → teks di pop-up; error → dialog; selain itu → pesan singkat. */
+  function status(msg, isErr = false) {
+    $('status').textContent = msg; // catatan tersembunyi (untuk pengujian)
+    if (isErr) { Busy.end(); showError(msg); return; }
+    if (Busy.active) Busy.set(undefined, msg);
+    else toast(msg);
   }
 
   function log(el, msg, append = true) {
@@ -70,6 +109,7 @@
   async function connect() {
     const { owner, repo, token } = state.cfg;
     state.gh = new GitHub({ owner, repo, token });
+    Busy.start('Memuat data');
     status('Menyambung ke GitHub…');
     await state.gh.check();
 
@@ -103,7 +143,10 @@
 
     const deltas = [];
     state.deltaYears = new Set();
+    let step = 0;
+    const steps = state.files.delta.length + 3;
     for (const f of state.files.delta) {
+      Busy.set(0.1 + (0.2 * ++step) / steps);
       status(`Mengunduh ${f.name}…`);
       const obj = await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha));
       deltas.push(obj);
@@ -116,6 +159,7 @@
     for (const f of state.files.tahun) {
       const y = Number(f.name.slice(0, 4));
       if (!want.has(y)) continue;
+      Busy.set(0.3 + (0.55 * ++step) / (steps + want.size));
       status(`Mengunduh data ${y}…`);
       state.db.loadYear(await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha)));
       state.loadedYears.add(y);
@@ -126,7 +170,11 @@
     state.activeFrom = (maxYear - 1) * 10000;
 
     await state.gh.pruneCache([...state.files.tahun, ...state.files.delta, ...(await state.gh.list(REPO_DIRS.engine))]);
+    Busy.set(0.9, 'Menghitung sinyal semua saham…');
+    await tick();
     afterDataChange();
+    Busy.set(1);
+    Busy.end();
     status(`Siap · ${state.db.symbols().length} simbol · data s.d. ${Screening.fmtDate(lastIdxDate())}`);
     if (!state.files.tahun.length) status('Database kosong. Buka tab Data → Konversi database AmiBroker.');
   }
@@ -146,8 +194,10 @@
     for (const f of older) if (!(await state.gh.isCached(f.path, f.sha))) missing += f.size;
     if (missing > 0 && !confirm(`Arsip perlu diunduh sekali (±${Math.round(missing / 1048576)} MB) dan disimpan di perangkat ini. Lanjut?`)) return false;
     let k = 0;
+    Busy.start(`Memuat arsip ${sym}`);
     for (const f of [...older].reverse()) {
       k++;
+      Busy.set(k / older.length);
       status(`Membaca arsip ${f.name.slice(0, 4)} (${k}/${older.length})…`);
       const obj = await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha));
       const s = {};
@@ -157,6 +207,7 @@
     }
     state.archDB.applyCorrections(state.koreksi);
     want.forEach((x) => state.archDone.add(x));
+    Busy.end();
     status(`Arsip ${sym} dimuat.`);
     return true;
   }
@@ -250,10 +301,12 @@
 
   async function saveBook() {
     $('po-save').disabled = true;
+    Busy.start('Menyimpan keputusan');
     try {
-      await state.gh.commit([{ path: BOOK_PATH, text: JSON.stringify(state.book, null, 1) }], 'Keputusan portofolio', (m) => status(m));
+      await state.gh.commit([{ path: BOOK_PATH, text: JSON.stringify(state.book, null, 1) }], 'Keputusan portofolio', (m, f) => Busy.set(f, m));
       state.bookDirty = 0;
       renderSaveBar();
+      Busy.end();
       status('Keputusan portofolio tersimpan.');
     } catch (e) {
       status(`Gagal menyimpan: ${e.message}`, true);
@@ -404,20 +457,16 @@
     state.chartSym = sym;
     $('ch-sym').value = sym;
     if (!state.chart) {
-      state.chart = new ChartView({ price: $('ch-price'), nbsa: $('ch-nbsa'), nbsaInfo: $('ch-nbsa-info'), title: $('ch-title'), rrg: $('ch-rrg'), rrgInfo: $('rrg-info') });
+      state.chart = new ChartView({ price: $('ch-price'), nbsa: $('ch-nbsa'), nbsaInfo: $('ch-nbsa-info'), title: $('ch-title'), rrg: $('ch-rrg'), rrgInfo: $('rrg-info'), legend: $('ch-legend'), ribbon: $('ch-ribbon'), bsInfo: $('ch-bs-info') });
     }
     if (state.archiveMode && !(await loadArchiveFor(sym))) setRange(252);
     const s = chartSeries(sym, state.archiveMode);
     const base = chartSeries('^JKSE', state.archiveMode) || { date: new Int32Array(0), C: new Float64Array(0) };
     const E = state.engines;
-    let signals = null;
-    if (E.binarsaujana && s.C.length >= E.binarsaujana.minBars) {
-      const r = E.binarsaujana.run(s, { base });
-      signals = { buy: r.buy, sell: r.sell };
-    }
+    const bs = E.binarsaujana && E.binarsaujana.chart && s.C.length >= E.binarsaujana.minBars ? E.binarsaujana.chart(s, { base }) : null;
     const nbsa = E.nbsa ? E.nbsa.run(s) : null;
     const rrg = E.rrg ? { ...E.rrg.run(s, { base }), param: E.rrg.param } : null;
-    state.chart.show({ sym, name: state.db.names[sym], s, signals, nbsa, rrg, bars: state.archiveMode ? 0 : state.chartBars });
+    state.chart.show({ sym, name: state.db.names[sym], s, bs, nbsa, rrg, bars: state.archiveMode ? 0 : state.chartBars });
   }
 
   // ------------------------------------------------------------------ import CSV
@@ -425,7 +474,11 @@
   async function onCsvFiles(files) {
     const out = $('csv-result');
     out.textContent = '';
+    Busy.start('Import CSV');
+    let k = 0;
     for (const file of files) {
+      Busy.set(k++ / files.length, file.name);
+      await tick();
       try {
         const text = await file.text();
         const r = Data.importCSV(state.db, text);
@@ -438,7 +491,10 @@
       }
     }
     state.db.applyCorrections(state.koreksi);
+    Busy.set(0.95, 'Menghitung ulang sinyal…');
+    await tick();
     afterDataChange();
+    Busy.end();
     if (state.pending.length) log(out, 'Data sudah bisa dipakai untuk screening. Tekan "Simpan ke GitHub" agar tersimpan permanen.');
   }
 
@@ -446,14 +502,17 @@
     if (!state.pending.length) return;
     const btn = $('csv-save');
     btn.disabled = true;
+    Busy.start('Menyimpan import ke GitHub');
     try {
       const now = new Date();
       const stamp = now.toISOString().replace(/[-:]/g, '').replace('T', '-').slice(0, 15);
       const bytes = await Data.gzipJSON({ v: 1, created: now.toISOString(), rows: state.pending });
-      await state.gh.commit([{ path: `${REPO_DIRS.delta}/${stamp}.json.gz`, bytes }], `Import data ${stamp}`, (m) => status(m));
+      await state.gh.commit([{ path: `${REPO_DIRS.delta}/${stamp}.json.gz`, bytes }], `Import data ${stamp}`, (m, f) => Busy.set(f, m));
       state.pending = [];
       state.files.delta = (await state.gh.list(REPO_DIRS.delta)).filter((f) => f.name.endsWith('.json.gz'));
       log($('csv-result'), 'Tersimpan di GitHub.');
+      Busy.end();
+      toast('Import tersimpan di GitHub.');
     } catch (e) {
       status(`Gagal menyimpan: ${e.message}`, true);
     }
@@ -464,6 +523,7 @@
     if (state.pending.length) { status('Simpan dulu import yang tertunda.', true); return; }
     if (!state.files.delta.length) { status('Tidak ada file harian untuk digabung.'); return; }
     if (!confirm(`Gabungkan ${state.files.delta.length} file harian ke file tahun ${[...state.deltaYears].sort().join(', ')}?`)) return;
+    Busy.start('Konsolidasi');
     try {
       const files = [];
       for (const y of [...state.deltaYears].sort()) {
@@ -471,7 +531,7 @@
         files.push({ path: `${REPO_DIRS.tahun}/${y}.json.gz`, bytes: await Data.gzipJSON(state.db.toYear(y)) });
       }
       for (const f of state.files.delta) files.push({ path: f.path, delete: true });
-      await state.gh.commit(files, `Konsolidasi ${state.files.delta.length} file harian`, (m) => status(m));
+      await state.gh.commit(files, `Konsolidasi ${state.files.delta.length} file harian`, (m, f) => Busy.set(f, m));
       await connect();
     } catch (e) {
       status(`Konsolidasi gagal: ${e.message}`, true);
@@ -483,6 +543,7 @@
   async function onAmiBrokerFolder(fileList) {
     const out = $('ab-result');
     out.textContent = '';
+    Busy.start('Membaca database AmiBroker');
     const files = [...fileList].filter((f) => f.size >= 1184);
     const db = new Data.PriceDB();
     const anomalies = [];
@@ -496,12 +557,13 @@
         db.upsert(r.sym, b, 'AB');
         if (!(b.h >= Math.max(b.o, b.c) && b.l <= Math.min(b.o, b.c))) anomalies.push(`${r.sym} ${Screening.fmtDate(b.d)} O${b.o} H${b.h} L${b.l} C${b.c}`);
       }
-      if (k % 50 === 0) { log(out, `Membaca ${k + 1}/${files.length}…`, false); await tick(); }
+      if (k % 25 === 0) { Busy.set(k / files.length, `File ${k + 1} dari ${files.length}`); await tick(); }
     }
     db.applyCorrections(state.koreksi);
     // import harian yang sudah ada (lebih baru) diterapkan di atas data AmiBroker agar tidak hilang
     for (const f of state.files.delta) db.applyDelta(await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha)));
     state.abDB = db;
+    Busy.end();
     const ys = db.years();
     log(out, [
       `${ok} simbol terbaca dari ${files.length} file.`,
@@ -519,15 +581,17 @@
     if (!db) return;
     if (!confirm('Unggah hasil konversi? Semua file tahun di GitHub akan diganti.')) return;
     $('ab-save').disabled = true;
+    Busy.start('Mengunggah hasil konversi');
     try {
       const files = [];
-      for (const y of db.years()) {
-        status(`Mengemas ${y}…`);
+      const ys = db.years();
+      for (const y of ys) {
+        Busy.set((0.3 * files.length) / ys.length, `Mengemas ${y}…`);
         files.push({ path: `${REPO_DIRS.tahun}/${y}.json.gz`, bytes: await Data.gzipJSON(db.toYear(y)) });
         await tick();
       }
       for (const f of state.files.delta) files.push({ path: f.path, delete: true });
-      await state.gh.commit(files, 'Konversi database AmiBroker', (m) => status(m));
+      await state.gh.commit(files, 'Konversi database AmiBroker', (m, f) => Busy.set(0.3 + 0.7 * f, m));
       state.abDB = null;
       log($('ab-result'), 'Selesai diunggah.');
       await connect();
@@ -587,6 +651,7 @@
   $('ab-folder').addEventListener('change', (e) => onAmiBrokerFolder([...e.target.files]));
   $('ab-save').addEventListener('click', saveAmiBroker);
   $('set-save').addEventListener('click', saveCfg);
+  $('dlg-ok').addEventListener('click', () => { $('dlg').hidden = true; });
   $('set-forget').addEventListener('click', () => {
     localStorage.removeItem('app-saham-cfg');
     $('set-token').value = '';
@@ -610,7 +675,7 @@
     $('set-token').value = state.cfg.token;
     start();
   } else {
-    status('Isi Pengaturan dulu.');
+    toast('Isi Pengaturan dulu.');
     switchTab('setting');
   }
 })();

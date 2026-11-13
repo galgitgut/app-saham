@@ -124,18 +124,18 @@
           tree.push({ path: f.path, mode: '100644', type: 'blob', sha: null });
           continue;
         }
-        progress(`Mengunggah ${k}/${files.length}: ${f.path}`);
+        progress(`Mengunggah ${k}/${files.length}: ${f.path}`, (k - 1) / files.length);
         const bytes = f.bytes || new TextEncoder().encode(f.text);
         const blob = await (await this._req('POST', '/git/blobs', { content: toBase64(bytes), encoding: 'base64' })).json();
         tree.push({ path: f.path, mode: '100644', type: 'blob', sha: blob.sha });
       }
-      progress('Membuat commit…');
+      progress('Membuat commit…', 0.97);
       const newTree = await (await this._req('POST', '/git/trees', { base_tree: head.tree.sha, tree })).json();
       const newCommit = await (await this._req('POST', '/git/commits', {
         message, tree: newTree.sha, parents: [headSha],
       })).json();
       await this._req('PATCH', `/git/refs/heads/${this.branch}`, { sha: newCommit.sha });
-      progress('Tersimpan di GitHub.');
+      progress('Tersimpan di GitHub.', 1);
       return newCommit.sha;
     }
   }

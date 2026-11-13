@@ -127,3 +127,18 @@ input.lot { width: 80px; padding: 4px 6px; }
 .rrg-head { display: flex; justify-content: space-between; gap: 8px; margin: 12px 0 4px; font-weight: 700; }
 canvas.rrg { width: 100%; height: 340px; border: 1px solid var(--line); border-radius: 10px; background: #000; display: block; }
 .field.check { flex-direction: row; align-items: center; gap: 8px; grid-column: 1 / -1; }
+.legend { display: flex; flex-wrap: wrap; gap: 6px; margin: 6px 0; }
+.chip { display: inline-flex; align-items: center; gap: 5px; padding: 3px 9px; border-radius: 999px; font-size: 11px; opacity: .5; background: rgba(255,255,255,.04); border: 1px solid var(--line); }
+.chip.on { opacity: 1; background: rgba(99, 102, 241, .18); border-color: rgba(99, 102, 241, .5); }
+.chip i { display: inline-block; width: 14px; height: 3px; border-radius: 2px; }
+canvas.ribbon { width: 100%; display: block; margin-top: 2px; border-radius: 6px; background: #000; }
+.overlay { position: fixed; inset: 0; z-index: 100; display: flex; align-items: center; justify-content: center; padding: 20px; background: rgba(5, 8, 20, .72); backdrop-filter: blur(4px); }
+.busy-card { width: min(420px, 100%); background: var(--panel-solid); border: 1px solid var(--line); border-radius: 16px; padding: 20px; box-shadow: 0 20px 60px rgba(0, 0, 0, .5); }
+.busy-title { font-weight: 700; font-size: 16px; margin-bottom: 14px; }
+.busy-title.err { color: var(--down); }
+.bar { height: 14px; border-radius: 999px; background: rgba(255, 255, 255, .08); overflow: hidden; }
+.bar-fill { height: 100%; width: 0; background: var(--grad); border-radius: 999px; transition: width .25s ease; box-shadow: 0 0 12px rgba(34, 211, 238, .6); }
+.busy-row { display: flex; justify-content: space-between; gap: 10px; margin-top: 10px; align-items: center; }
+.busy-row .muted { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+#dlg-msg { white-space: pre-wrap; }
+.toast { position: fixed; left: 50%; bottom: max(18px, env(safe-area-inset-bottom)); transform: translateX(-50%); z-index: 90; padding: 10px 16px; border-radius: 12px; background: rgba(22, 30, 54, .95); border: 1px solid rgba(99, 102, 241, .5); box-shadow: 0 8px 24px rgba(0, 0, 0, .4); max-width: 90vw; font-size: 13px; }
