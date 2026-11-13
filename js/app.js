@@ -27,7 +27,13 @@
     archDone: new Set(),
     archiveMode: false,
     abDB: null,
+    book: null, // keputusan portofolio (portfolio/buku.json di repo data)
+    bookDirty: 0,
+    histFilter: 'trade',
+    porto: null,
   };
+  const BOOK_PATH = 'portfolio/buku.json';
+  const emptyBook = () => ({ v: 1, cfg: { ...Portfolio.DEFAULT_CFG }, decisions: {}, manual: [] });
 
   // ------------------------------------------------------------------ util tampilan
 
@@ -82,6 +88,10 @@
     // konfigurasi
     state.exclude = Data.parseList((await state.gh.getText('config/exclude.txt')) || '');
     state.koreksi = JSON.parse((await state.gh.getText('config/koreksi.json')) || '[]');
+    const bookText = await state.gh.getText(BOOK_PATH);
+    state.book = bookText ? JSON.parse(bookText) : emptyBook();
+    state.book.cfg = { ...Portfolio.DEFAULT_CFG, ...state.book.cfg };
+    state.bookDirty = 0;
 
     // data: file harian dulu (untuk tahu tahun mana yang tersentuh), lalu file tahun, lalu terapkan file harian
     state.db = new Data.PriceDB();
@@ -188,6 +198,165 @@
     $('scr-engine').innerHTML = scr.map(([k, e]) => `<option value="${k}">${e.name}</option>`).join('');
     if (cur && state.engines[cur]) $('scr-engine').value = cur;
     renderDbInfo();
+    refreshPortfolio();
+  }
+
+  // ------------------------------------------------------------------ portofolio
+
+  function screenCtx() {
+    return { db: state.db, engines: state.engines, base: baseSeries(state.activeFrom), exclude: state.exclude, cache: state.cache, fromDate: state.activeFrom };
+  }
+
+  function refreshPortfolio() {
+    if (!state.book || !state.engines.binarsaujana) return;
+    const last = lastIdxDate();
+    if (!last) return;
+    const cfg = state.book.cfg;
+    if (!cfg.modal.length) {
+      $('po-summary').innerHTML = '<div class="card alert-info">Isi <b>Modal total</b> di bagian "Pengaturan portofolio" di bawah, lalu tekan Terapkan.</div>';
+      openSettings();
+      document.querySelector('#tab-porto details:last-of-type').open = true;
+    }
+    const ctx = screenCtx();
+    const sig = new Map();
+    const universe = new Set();
+    const addSig = (sym) => {
+      const res = Screening.compute(ctx, 'binarsaujana', sym);
+      if (res) sig.set(sym, { date: res.s.date, C: res.s.C, P: res.s.P, buyRaw: res.r.buyRaw, sellRaw: res.r.sellRaw, power: res.r.positionScore });
+      return !!res;
+    };
+    for (const sym of state.db.symbols()) {
+      if (state.exclude.has(sym) || !Data.isIdxStock(state.db, sym)) continue;
+      if (addSig(sym)) universe.add(sym);
+    }
+    for (const m of state.book.manual) if (!sig.has(m.sym) && state.db.get(m.sym)) addSig(m.sym);
+    const start = Math.floor(last / 10000) * 10000 + 101; // selalu dari awal tahun berjalan
+    const run = { ...cfg, start, decideFrom: cfg.decideFrom || last };
+    state.porto = Portfolio.simulate({ sig, universe, cfg: run, book: state.book, lastDate: last });
+    PortfolioUI.render(state.porto, { decision: (k) => state.book.decisions[k], histFilter: state.histFilter });
+    if (!$('mn-date').value) $('mn-date').value = toInputDate(last);
+    renderManualList();
+    renderSaveBar();
+  }
+
+  function markDirty() {
+    state.bookDirty++;
+    refreshPortfolio();
+  }
+
+  function renderSaveBar() {
+    $('po-save-bar').hidden = !state.bookDirty;
+    $('po-dirty').textContent = `${state.bookDirty} perubahan belum disimpan`;
+  }
+
+  async function saveBook() {
+    $('po-save').disabled = true;
+    try {
+      await state.gh.commit([{ path: BOOK_PATH, text: JSON.stringify(state.book, null, 1) }], 'Keputusan portofolio', (m) => status(m));
+      state.bookDirty = 0;
+      renderSaveBar();
+      status('Keputusan portofolio tersimpan.');
+    } catch (e) {
+      status(`Gagal menyimpan: ${e.message}`, true);
+    }
+    $('po-save').disabled = false;
+  }
+
+  function openSettings() {
+    const c = state.book.cfg;
+    const last = lastIdxDate();
+    const cur = c.modal.length ? [...c.modal].sort((a, b) => a.d - b.d).at(-1) : null;
+    $('pc-modal').value = cur ? cur.value : '';
+    $('pc-modal-date').value = toInputDate(cur ? Math.max(cur.d, Math.floor(last / 10000) * 10000 + 101) : Math.floor(last / 10000) * 10000 + 101);
+    $('pc-slots').value = c.slots;
+    $('pc-first').value = c.firstPct;
+    $('pc-add').value = c.addPct;
+    $('pc-feebuy').value = c.feeBuy;
+    $('pc-feesell').value = c.feeSell;
+    $('pc-decide').value = toInputDate(c.decideFrom || last);
+    $('pc-modal-list').textContent = c.modal.length
+      ? 'Riwayat modal:\n' + [...c.modal].sort((a, b) => a.d - b.d).map((m) => `  mulai ${Screening.fmtDate(m.d)}: Rp ${Math.round(m.value).toLocaleString('id-ID')}`).join('\n')
+      : '';
+  }
+
+  function applySettings() {
+    const c = state.book.cfg;
+    const modal = Number($('pc-modal').value);
+    const md = fromInputDate($('pc-modal-date').value);
+    if (modal > 0 && md) {
+      c.modal = c.modal.filter((m) => m.d !== md);
+      const cur = [...c.modal].sort((a, b) => a.d - b.d).filter((m) => m.d <= md).at(-1);
+      if (!cur || cur.value !== modal) c.modal.push({ d: md, value: modal });
+    }
+    c.slots = Math.max(1, Number($('pc-slots').value) || 9);
+    c.firstPct = Number($('pc-first').value) || 60;
+    c.addPct = Number($('pc-add').value) || 20;
+    c.feeBuy = Number($('pc-feebuy').value);
+    c.feeSell = Number($('pc-feesell').value);
+    c.decideFrom = fromInputDate($('pc-decide').value) || 0;
+    openSettings();
+    markDirty();
+  }
+
+  function renderManualList() {
+    const list = state.book.manual;
+    $('mn-list').innerHTML = list.length
+      ? list.map((m) => `<div class="edit-row">${Screening.fmtDate(m.d)} · ${m.kind === 'sell' ? 'JUAL' : 'BELI'} ${m.sym} ${m.lots || 'semua'} lot @ ${m.price} <button class="small no" data-mdel="${m.id}">Hapus</button></div>`).join('')
+      : 'Belum ada input manual.';
+  }
+
+  function addManual() {
+    const sym = $('mn-sym').value.trim().toUpperCase();
+    const d = fromInputDate($('mn-date').value);
+    const price = Number($('mn-price').value);
+    const lots = Number($('mn-lots').value) || 0;
+    const kind = $('mn-kind').value;
+    if (!state.db.get(sym)) { status(`Simbol ${sym} tidak ada di database.`, true); return; }
+    if (!d || !(price > 0) || (kind === 'buy' && !(lots > 0))) { status('Lengkapi tanggal, harga, dan lot.', true); return; }
+    state.book.manual.push({ id: Date.now(), sym, d, kind, price, lots });
+    $('mn-sym').value = ''; $('mn-price').value = ''; $('mn-lots').value = '';
+    markDirty();
+  }
+
+  function onPortoClick(e) {
+    const t = e.target;
+    const chart = t.closest('[data-chart]');
+    if (chart) { e.preventDefault(); switchTab('chart', chart.dataset.chart); return; }
+    const D = state.book.decisions;
+    if (t.dataset.approve) {
+      const key = t.dataset.approve;
+      const inp = document.querySelector(`[data-lots="${key}"]`);
+      D[key] = { act: 'approve', lots: Math.max(0, Math.floor(Number(inp && inp.value) || 0)) };
+      markDirty();
+    } else if (t.dataset.skip) {
+      D[t.dataset.skip] = { act: 'skip' };
+      markDirty();
+    } else if (t.dataset.undo) {
+      delete D[t.dataset.undo];
+      markDirty();
+    } else if (t.dataset.edit) {
+      const row = document.querySelector(`[data-editor="${t.dataset.edit}"]`);
+      if (row) row.hidden = !row.hidden;
+    } else if (t.dataset.esave) {
+      const key = t.dataset.esave;
+      const lots = Math.max(0, Math.floor(Number(document.querySelector(`[data-elots="${CSS.escape(key)}"]`).value) || 0));
+      const price = Number(document.querySelector(`[data-eprice="${CSS.escape(key)}"]`).value);
+      if (key.startsWith('manual:')) {
+        const m = state.book.manual.find((x) => String(x.id) === key.slice(7));
+        if (m) { m.lots = lots; if (price > 0) m.price = price; }
+      } else {
+        D[key] = { act: 'approve', lots, ...(price > 0 ? { price } : {}) };
+      }
+      markDirty();
+    } else if (t.dataset.mdel) {
+      state.book.manual = state.book.manual.filter((x) => String(x.id) !== t.dataset.mdel);
+      markDirty();
+    } else if (t.closest('#po-hist-filter button')) {
+      const b = t.closest('button');
+      state.histFilter = b.dataset.f;
+      document.querySelectorAll('#po-hist-filter button').forEach((x) => x.classList.toggle('on', x === b));
+      PortfolioUI.renderHistory(state.porto, state.histFilter);
+    }
   }
 
   function renderDbInfo() {
@@ -211,8 +380,7 @@
     if (!key) { status('Belum ada formula screening di repo data.', true); return; }
     const date = fromInputDate($('scr-date').value);
     const t0 = performance.now();
-    const ctx = { db: state.db, engines: state.engines, base: baseSeries(state.activeFrom), exclude: state.exclude, cache: state.cache, fromDate: state.activeFrom };
-    const res = Screening.run(ctx, key, date);
+    const res = Screening.run(screenCtx(), key, date);
     Screening.render($('scr-table'), state.engines[key], res, (sym) => switchTab('chart', sym));
     $('scr-info').textContent = `${res.rows.length} lolos dari ${res.universe} saham · ${Math.round(performance.now() - t0)} ms`;
   }
@@ -421,8 +589,13 @@
     $('set-token').value = '';
     log($('set-result'), 'Token dihapus dari perangkat ini.', false);
   });
+  $('tab-porto').addEventListener('click', onPortoClick);
+  $('po-save').addEventListener('click', saveBook);
+  $('pc-apply').addEventListener('click', applySettings);
+  $('mn-add').addEventListener('click', addManual);
+  document.querySelector('#tab-porto details:last-of-type').addEventListener('toggle', (e) => { if (e.target.open) openSettings(); });
   window.addEventListener('beforeunload', (e) => {
-    if (state.pending.length) { e.preventDefault(); e.returnValue = ''; }
+    if (state.pending.length || state.bookDirty) { e.preventDefault(); e.returnValue = ''; }
   });
 
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
