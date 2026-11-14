@@ -96,6 +96,7 @@
     document.querySelectorAll('.tab').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
     document.querySelectorAll('.panel').forEach((p) => p.classList.toggle('active', p.id === `tab-${name}`));
     if (name === 'chart' && (sym || state.chartSym)) showChart(sym || state.chartSym);
+    if (name === 'studi') openStudy();
   }
 
   // ------------------------------------------------------------------ memuat data
@@ -138,6 +139,7 @@
     state.loadedYears = new Set();
     state.archDB = new Data.PriceDB();
     state.archDone = new Set();
+    studyLoaded = false;
     state.files.tahun = (await state.gh.list(REPO_DIRS.tahun)).filter((f) => /^\d{4}\.json\.gz$/.test(f.name)).sort((a, b) => a.name.localeCompare(b.name));
     state.files.delta = (await state.gh.list(REPO_DIRS.delta)).filter((f) => f.name.endsWith('.json.gz')).sort((a, b) => a.name.localeCompare(b.name));
 
@@ -441,6 +443,72 @@
     $('scr-info').textContent = `${res.rows.length} lolos dari ${res.universe} saham · ${Math.round(performance.now() - t0)} ms`;
   }
 
+  // ------------------------------------------------------------------ studi trade
+
+  let studyLoaded = false;
+
+  async function openStudy() {
+    if (!state.gh) return;
+    const years = state.files.tahun.map((f) => Number(f.name.slice(0, 4)));
+    if (years.length && !$('st-from').options.length) {
+      const opts = years.map((y) => `<option value="${y}">${y}</option>`).join('');
+      $('st-from').innerHTML = opts;
+      $('st-to').innerHTML = opts;
+      $('st-from').value = String(years.find((y) => y >= 2008) || years[0]);
+      $('st-to').value = String(years[years.length - 1]);
+    }
+    if (studyLoaded) return;
+    studyLoaded = true;
+    try {
+      const f = (await state.gh.list('studi')).find((x) => x.name === 'terakhir.json.gz');
+      if (!f) return;
+      Busy.start('Membuka hasil studi');
+      Busy.set(0.3, 'Mengunduh hasil studi terakhir…');
+      StudyUI.setResult(await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha)));
+      Busy.end();
+    } catch (e) {
+      status(`Gagal membuka hasil studi: ${e.message}`, true);
+    }
+  }
+
+  async function runStudy() {
+    const E = state.engines.binarsaujana;
+    if (!E || !E.features) { status('Formula BinarSaujana di repo data belum versi terbaru (perlu fungsi studi).', true); return; }
+    const fromYear = Number($('st-from').value), toYear = Number($('st-to').value);
+    if (!(fromYear <= toYear)) { status('Tahun awal harus ≤ tahun akhir.', true); return; }
+    const files = state.files.tahun.filter((f) => { const y = Number(f.name.slice(0, 4)); return y >= fromYear - 1 && y <= toYear; });
+    let dl = 0;
+    for (const f of files) if (!(await state.gh.isCached(f.path, f.sha))) dl += f.size;
+    const mobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
+    const msg = `Analisa ${fromYear}–${toYear} (${files.length} file tahun)${dl ? `, perlu mengunduh ±${Math.round(dl / 1048576)} MB` : ''}. ` +
+      `Bisa makan waktu beberapa menit${mobile ? ' dan berat untuk HP — sebaiknya di laptop' : ''}. Lanjut?`;
+    if (!confirm(msg)) return;
+    Busy.start(`Studi Trade ${fromYear}–${toYear}`);
+    try {
+      const res = await Study.collect({
+        gh: state.gh, files: state.files.tahun, engine: E, exclude: state.exclude,
+        isStock: (sym, d) => /^[A-Z]{4}$/.test(sym) && (Data.isIdxStock(d, sym) || Data.isIdxStock(state.db, sym) || /tbk/i.test(d.names[sym] || state.db.names[sym] || '')),
+        params: { fromYear, toYear, feeBuy: state.book ? state.book.cfg.feeBuy : 0.18, feeSell: state.book ? state.book.cfg.feeSell : 0.28 },
+        progress: (f, m) => Busy.set(f * 0.9, m),
+      });
+      Busy.set(0.92, 'Menyimpan hasil ke GitHub…');
+      await state.gh.commit([{ path: 'studi/terakhir.json.gz', bytes: await Data.gzipJSON(res) }], `Studi trade ${fromYear}-${toYear}`, (m, f) => Busy.set(0.92 + 0.06 * f, m));
+      if ($('st-clean').checked) {
+        Busy.set(0.99, 'Membersihkan arsip dari perangkat…');
+        const old = state.files.tahun.filter((f) => Number(f.name.slice(0, 4)) * 10000 < state.activeFrom);
+        await state.gh.uncache(old);
+        state.archDB = new Data.PriceDB();
+        state.archDone = new Set();
+      }
+      StudyUI.setResult(res);
+      Busy.end();
+      toast(`Studi selesai: ${res.trades.length.toLocaleString('id-ID')} trade.`);
+    } catch (e) {
+      console.error(e);
+      status(`Studi gagal: ${e.message}`, true);
+    }
+  }
+
   // ------------------------------------------------------------------ chart
 
   function setRange(r) {
@@ -658,6 +726,8 @@
     log($('set-result'), 'Token dihapus dari perangkat ini.', false);
   });
   $('tab-porto').addEventListener('click', onPortoClick);
+  $('st-run').addEventListener('click', runStudy);
+  StudyUI.bind((sym) => switchTab('chart', sym));
   $('po-save').addEventListener('click', saveBook);
   $('pc-apply').addEventListener('click', applySettings);
   $('mn-add').addEventListener('click', addManual);

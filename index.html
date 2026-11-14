@@ -19,6 +19,7 @@
     <button class="tab active" data-tab="porto">Portofolio<span id="porto-badge" class="tab-badge" hidden></span></button>
     <button class="tab" data-tab="screening">Screening</button>
     <button class="tab" data-tab="chart">Chart</button>
+    <button class="tab" data-tab="studi">Studi</button>
     <button class="tab" data-tab="data">Data</button>
     <button class="tab" data-tab="setting">Pengaturan</button>
   </nav>
@@ -125,6 +126,54 @@
       <canvas id="ch-rrg" class="rrg"></canvas>
     </section>
 
+    <!-- ============================================================ STUDI TRADE -->
+    <section id="tab-studi" class="panel">
+      <div class="card">
+        <h3>Studi Trade</h3>
+        <p class="muted">Mengumpulkan semua trade (Buy → Sell, harga Close) di semua saham, lalu mencari indikator saat Buy yang membedakan trade pemenang. Riwayat hanya diunduh selama analisa berjalan dan dibuang lagi setelahnya. Disarankan di laptop.</p>
+        <div class="form-row">
+          <label class="field">Dari tahun<select id="st-from"></select></label>
+          <label class="field">Sampai tahun<select id="st-to"></select></label>
+        </div>
+        <label class="field check"><input id="st-clean" type="checkbox" checked> Hapus arsip dari perangkat setelah selesai (app tetap ringan)</label>
+        <button id="st-run" class="primary">Jalankan analisa</button>
+      </div>
+
+      <div id="st-result" hidden>
+        <div class="card">
+          <div id="st-meta" class="muted"></div>
+          <div class="form-grid">
+            <label class="field">Threshold gain (%)<input id="st-thr" type="number" value="50"></label>
+            <label class="field">Jenis gain
+              <select id="st-type"><option value="maks">Maksimum selama dipegang</option><option value="akhir">Akhir (setelah fee)</option></select>
+            </label>
+            <label class="field">Periode studi s.d. tahun<select id="st-split"></select></label>
+            <label class="field check"><input id="st-open" type="checkbox"> Sertakan trade yang masih terbuka</label>
+          </div>
+          <button id="st-csv">Unduh CSV</button>
+        </div>
+        <div id="st-summary" class="stats"></div>
+        <div class="card">
+          <h3>Indikator angka: pemenang vs semua trade</h3>
+          <p class="muted">Win rate per kuartil: trade dibagi 4 kelompok sama besar menurut nilai indikator (Q1 terendah, Q4 tertinggi). Kolom "Uji" memakai batas kuartil yang sama di periode setelah tahun studi; pola yang bagus tetap terlihat di sana. Urutan: indikator yang paling membedakan di atas.</p>
+          <div class="table-wrap"><table id="st-num" class="grid"></table></div>
+        </div>
+        <div class="card">
+          <h3>Indikator kategori</h3>
+          <div class="table-wrap"><table id="st-cat" class="grid"></table></div>
+        </div>
+        <div class="card">
+          <h3>Daftar trade <span id="st-count" class="muted"></span></h3>
+          <div class="toolbar">
+            <span class="seg small" id="st-filter"><button data-f="win" class="on">Pemenang</button><button data-f="all">Semua</button><button data-f="open">Terbuka</button></span>
+            <input id="st-search" placeholder="Cari kode" autocapitalize="characters" autocomplete="off">
+          </div>
+          <div class="table-wrap"><table id="st-trades" class="grid"></table></div>
+          <button id="st-more" hidden>Tampilkan lebih banyak</button>
+        </div>
+      </div>
+    </section>
+
     <!-- ============================================================ DATA -->
     <section id="tab-data" class="panel">
       <div class="card">
@@ -200,6 +249,8 @@
   <script src="js/screening.js"></script>
   <script src="js/portfolio.js"></script>
   <script src="js/portfolio-ui.js"></script>
+  <script src="js/study.js"></script>
+  <script src="js/study-ui.js"></script>
   <script src="js/chart.js"></script>
   <script src="js/app.js"></script>
 </body>
