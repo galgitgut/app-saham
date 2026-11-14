@@ -252,6 +252,7 @@
     if (cur && state.engines[cur]) $('scr-engine').value = cur;
     renderDbInfo();
     refreshPortfolio();
+    fillStudyYears();
   }
 
   // ------------------------------------------------------------------ portofolio
@@ -447,16 +448,22 @@
 
   let studyLoaded = false;
 
-  async function openStudy() {
-    if (!state.gh) return;
+  /** Isi pilihan tahun di tab Studi (dipanggil setiap data selesai dimuat). */
+  function fillStudyYears() {
     const years = state.files.tahun.map((f) => Number(f.name.slice(0, 4)));
-    if (years.length && !$('st-from').options.length) {
+    if (years.length && $('st-from').options.length !== years.length) {
       const opts = years.map((y) => `<option value="${y}">${y}</option>`).join('');
       $('st-from').innerHTML = opts;
       $('st-to').innerHTML = opts;
       $('st-from').value = String(years.find((y) => y >= 2008) || years[0]);
       $('st-to').value = String(years[years.length - 1]);
     }
+  }
+
+  async function openStudy() {
+    if (!state.gh) return;
+    fillStudyYears();
+    if (!$('st-from').options.length) { toast('Data belum selesai dimuat. Coba buka tab Studi lagi sebentar.'); return; }
     if (studyLoaded) return;
     studyLoaded = true;
     try {
