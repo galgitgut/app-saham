@@ -471,6 +471,7 @@
       if (!f) return;
       Busy.start('Membuka hasil studi');
       Busy.set(0.3, 'Mengunduh hasil studi terakhir…');
+      studyPaths = null;
       StudyUI.setResult(await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha)));
       Busy.end();
     } catch (e) {
@@ -485,21 +486,37 @@
     if (!(fromYear <= toYear)) { status('Tahun awal harus ≤ tahun akhir.', true); return; }
     const files = state.files.tahun.filter((f) => { const y = Number(f.name.slice(0, 4)); return y >= fromYear - 1 && y <= toYear; });
     let dl = 0;
-    for (const f of files) if (!(await state.gh.isCached(f.path, f.sha))) dl += f.size;
+    const needIndex = !(await state.gh.list('data')).some((x) => x.name === 'simbol.json');
+    for (const f of needIndex ? state.files.tahun : files) if (!(await state.gh.isCached(f.path, f.sha))) dl += f.size;
     const mobile = /Android|iPhone|iPad/i.test(navigator.userAgent);
     const msg = `Analisa ${fromYear}–${toYear} (${files.length} file tahun)${dl ? `, perlu mengunduh ±${Math.round(dl / 1048576)} MB` : ''}. ` +
       `Bisa makan waktu beberapa menit${mobile ? ' dan berat untuk HP — sebaiknya di laptop' : ''}. Lanjut?`;
     if (!confirm(msg)) return;
     Busy.start(`Studi Trade ${fromYear}–${toYear}`);
     try {
-      const res = await Study.collect({
-        gh: state.gh, files: state.files.tahun, engine: E, exclude: state.exclude,
+      // tanggal awal tiap saham (untuk umur); dibuat sekali dari seluruh riwayat lalu disimpan
+      const idxText = await state.gh.getText('data/simbol.json');
+      let firstDates = idxText ? JSON.parse(idxText) : null;
+      let p0 = 0;
+      if (!firstDates) {
+        firstDates = await Study.buildFirstDates(state.gh, state.files.tahun, (f, m) => Busy.set(f * 0.3, m));
+        p0 = 0.3;
+      }
+      const sectorText = await state.gh.getText('config/sektor.txt');
+      const sectorMap = sectorText ? Study.parseSectorMap(sectorText) : null;
+      const out = await Study.collect({
+        gh: state.gh, files: state.files.tahun, engine: E, exclude: state.exclude, firstDates, sectorMap,
         isStock: (sym, d) => /^[A-Z]{4}$/.test(sym) && (Data.isIdxStock(d, sym) || Data.isIdxStock(state.db, sym) || /tbk/i.test(d.names[sym] || state.db.names[sym] || '')),
         params: { fromYear, toYear, feeBuy: state.book ? state.book.cfg.feeBuy : 0.18, feeSell: state.book ? state.book.cfg.feeSell : 0.28 },
-        progress: (f, m) => Busy.set(f * 0.9, m),
+        progress: (f, m) => Busy.set(p0 + f * (0.9 - p0), m),
       });
-      Busy.set(0.92, 'Menyimpan hasil ke GitHub…');
-      await state.gh.commit([{ path: 'studi/terakhir.json.gz', bytes: await Data.gzipJSON(res) }], `Studi trade ${fromYear}-${toYear}`, (m, f) => Busy.set(0.92 + 0.06 * f, m));
+      Busy.set(0.91, 'Mengemas hasil…');
+      const files = [
+        { path: 'studi/terakhir.json.gz', bytes: await Data.gzipJSON(out.result) },
+        { path: 'studi/jejak.json.gz', bytes: await Data.gzipJSON(out.paths) },
+        { path: 'data/simbol.json', text: JSON.stringify(out.firstDates) },
+      ];
+      await state.gh.commit(files, `Studi trade ${fromYear}-${toYear}`, (m, f) => Busy.set(0.92 + 0.06 * f, m));
       if ($('st-clean').checked) {
         Busy.set(0.99, 'Membersihkan arsip dari perangkat…');
         const old = state.files.tahun.filter((f) => Number(f.name.slice(0, 4)) * 10000 < state.activeFrom);
@@ -507,13 +524,30 @@
         state.archDB = new Data.PriceDB();
         state.archDone = new Set();
       }
-      StudyUI.setResult(res);
+      studyPaths = out.paths;
+      StudyUI.setResult(out.result);
       Busy.end();
-      toast(`Studi selesai: ${res.trades.length.toLocaleString('id-ID')} trade.`);
+      toast(`Studi selesai: ${out.result.trades.length.toLocaleString('id-ID')} trade.`);
     } catch (e) {
       console.error(e);
       status(`Studi gagal: ${e.message}`, true);
     }
+  }
+
+  /** Jejak harian dimuat hanya saat dibutuhkan (lihat detail trade / unduh CSV jejak). */
+  let studyPaths = null;
+  async function loadStudyPaths() {
+    if (studyPaths) return studyPaths;
+    const f = (await state.gh.list('studi')).find((x) => x.name === 'jejak.json.gz');
+    if (!f) { toast('Jejak harian belum ada. Jalankan analisa sekali lagi dengan versi ini.'); return null; }
+    Busy.start('Membuka jejak harian');
+    Busy.set(0.4, 'Mengunduh jejak…');
+    try {
+      studyPaths = await Data.gunzipJSON(await state.gh.getBytes(f.path, f.sha));
+    } finally {
+      Busy.end();
+    }
+    return studyPaths;
   }
 
   // ------------------------------------------------------------------ chart
@@ -734,7 +768,7 @@
   });
   $('tab-porto').addEventListener('click', onPortoClick);
   $('st-run').addEventListener('click', runStudy);
-  StudyUI.bind((sym) => switchTab('chart', sym));
+  StudyUI.bind((sym) => switchTab('chart', sym), loadStudyPaths);
   $('po-save').addEventListener('click', saveBook);
   $('pc-apply').addEventListener('click', applySettings);
   $('mn-add').addEventListener('click', addManual);

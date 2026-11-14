@@ -7,7 +7,7 @@
   <title>Binar Saujana App</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="css/style.css?v=20261114b">
+  <link rel="stylesheet" href="css/style.css?v=20261114c">
 </head>
 <body>
   <header class="topbar">
@@ -150,7 +150,9 @@
             <label class="field">Periode studi s.d. tahun<select id="st-split"></select></label>
             <label class="field check"><input id="st-open" type="checkbox"> Sertakan trade yang masih terbuka</label>
           </div>
-          <button id="st-csv">Unduh CSV</button>
+          <button id="st-csv">Unduh CSV trade</button>
+          <button id="st-csv-path">Unduh jejak harian (CSV)</button>
+          <p class="muted">Ketuk baris trade untuk melihat jejak hariannya. Sektor diambil dari <code>config/sektor.txt</code> di repo data (format <code>KODE;IDXFINANCE</code> per baris); kalau file itu belum ada, sektor ditebak dari korelasi harga dengan indeks sektor IDX-IC.</p>
         </div>
         <div id="st-summary" class="stats"></div>
         <div class="card">
@@ -242,16 +244,16 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="js/afl.js?v=20261114b"></script>
-  <script src="js/amibroker.js?v=20261114b"></script>
-  <script src="js/data.js?v=20261114b"></script>
-  <script src="js/github.js?v=20261114b"></script>
-  <script src="js/screening.js?v=20261114b"></script>
-  <script src="js/portfolio.js?v=20261114b"></script>
-  <script src="js/portfolio-ui.js?v=20261114b"></script>
-  <script src="js/study.js?v=20261114b"></script>
-  <script src="js/study-ui.js?v=20261114b"></script>
-  <script src="js/chart.js?v=20261114b"></script>
-  <script src="js/app.js?v=20261114b"></script>
+  <script src="js/afl.js?v=20261114c"></script>
+  <script src="js/amibroker.js?v=20261114c"></script>
+  <script src="js/data.js?v=20261114c"></script>
+  <script src="js/github.js?v=20261114c"></script>
+  <script src="js/screening.js?v=20261114c"></script>
+  <script src="js/portfolio.js?v=20261114c"></script>
+  <script src="js/portfolio-ui.js?v=20261114c"></script>
+  <script src="js/study.js?v=20261114c"></script>
+  <script src="js/study-ui.js?v=20261114c"></script>
+  <script src="js/chart.js?v=20261114c"></script>
+  <script src="js/app.js?v=20261114c"></script>
 </body>
 </html>

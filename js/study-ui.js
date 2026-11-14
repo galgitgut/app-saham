@@ -10,7 +10,7 @@
   const cls = (x) => (x > 0 ? 'up' : x < 0 ? 'down' : '');
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  const ui = { res: null, an: null, filter: 'win', sort: { key: 'bd', dir: -1 }, limit: 300 };
+  const ui = { res: null, an: null, filter: 'win', sort: { key: 'bd', dir: -1 }, limit: 300, idx: new Map(), loadPaths: null };
 
   /** Sel win rate berwarna: makin tinggi dibanding rata-rata, makin hijau. */
   function rateCell(v, base, best) {
@@ -26,7 +26,8 @@
     if (!res) { $('st-result').hidden = true; return; }
     $('st-result').hidden = false;
     const p = res.params;
-    $('st-meta').textContent = `Dihitung ${new Date(res.created).toLocaleString('id-ID')} · ${p.fromYear}–${p.toYear} · ${res.trades.length.toLocaleString('id-ID')} trade dari ${res.symbols.toLocaleString('id-ID')} saham`;
+    $('st-meta').textContent = `Dihitung ${new Date(res.created).toLocaleString('id-ID')} · ${p.fromYear}–${p.toYear} · ${res.trades.length.toLocaleString('id-ID')} trade dari ${res.symbols.toLocaleString('id-ID')} saham` +
+      (res.sectorSource ? ` · sektor dari ${res.sectorSource === 'file' ? 'config/sektor.txt' : 'tebakan korelasi harga'}` : '');
     const opt = {
       threshold: Number($('st-thr').value) || 0,
       gainType: $('st-type').value,
@@ -86,9 +87,9 @@
     const shown = list.slice(0, ui.limit);
     const feats = res.featureList;
     $('st-trades').innerHTML = `<thead><tr><th data-k="s">Saham</th><th data-k="bd">Buy</th><th data-k="bp">Harga</th><th data-k="sd">Sell</th><th data-k="sp">Harga</th>
-      <th data-k="n">Bar</th><th data-k="g">Gain akhir</th><th data-k="m">Gain maks</th>${feats.map((m) => `<th data-k="${m.key}">${esc(m.label)}</th>`).join('')}</tr></thead>
-      <tbody>${shown.map((t) => `<tr><td><a href="#" data-chart="${t.s}">${t.s}</a>${t.o ? '<span class="badge">buka</span>' : ''}</td>
-        <td>${tgl(t.bd)}</td><td>${num(t.bp, 0)}</td><td>${tgl(t.sd)}</td><td>${num(t.sp, 0)}</td><td>${t.n}</td>
+      <th data-k="n">Bar</th><th data-k="b">Buy selama dipegang</th><th data-k="g">Gain akhir</th><th data-k="m">Gain maks</th>${feats.map((m) => `<th data-k="${m.key}">${esc(m.label)}</th>`).join('')}</tr></thead>
+      <tbody>${shown.map((t) => `<tr class="trade-row" data-ti="${ui.idx.get(t)}"><td><a href="#" data-chart="${t.s}">${t.s}</a>${t.o ? '<span class="badge">buka</span>' : ''}</td>
+        <td>${tgl(t.bd)}</td><td>${num(t.bp, 0)}</td><td>${tgl(t.sd)}</td><td>${num(t.sp, 0)}</td><td>${t.n}</td><td>${t.b ?? '-'}</td>
         <td class="${cls(t.g)}">${num(t.g)}%</td><td class="up">${num(t.m)}%</td>
         ${t.f.map((v, k) => (feats[k].type === 'num' ? `<td>${num(v, feats[k].dec)}</td>` : `<td class="txt">${esc(v ?? '')}</td>`)).join('')}</tr>`).join('')}</tbody>`;
     $('st-more').hidden = list.length <= ui.limit;
@@ -97,6 +98,7 @@
   function setResult(res) {
     ui.res = res;
     ui.limit = 300;
+    ui.idx = new Map((res ? res.trades : []).map((t, k) => [t, k]));
     if (res) {
       const ys = [];
       for (let y = res.params.fromYear; y < res.params.toYear; y++) ys.push(y);
@@ -107,7 +109,68 @@
     render();
   }
 
-  function bind(onChart) {
+  /** Grafik jejak harian satu trade: batang High–Low, garis Close, garis harga Buy, titik sinyal Buy lagi. */
+  function drawPath(cv, t, p) {
+    const dpr = window.devicePixelRatio || 1;
+    const W = cv.clientWidth, H = cv.clientHeight;
+    cv.width = W * dpr; cv.height = H * dpr;
+    const ctx = cv.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.fillStyle = '#05081a'; ctx.fillRect(0, 0, W, H);
+    const lo = Math.min(...p.l), hi = Math.max(...p.h);
+    const L = 46, R = W - 10, T = 10, B = H - 20;
+    const X = (i) => L + (p.d.length > 1 ? (i / (p.d.length - 1)) * (R - L) : (R - L) / 2);
+    const Y = (v) => B - ((v - lo) / (hi - lo || 1)) * (B - T);
+    ctx.font = '10px system-ui'; ctx.fillStyle = '#9aa6c4';
+    [lo, t.bp, hi].forEach((v) => ctx.fillText(num(v, 0), 2, Y(v) + 3));
+    ctx.strokeStyle = 'rgba(255,255,255,.5)'; ctx.setLineDash([4, 4]);
+    ctx.beginPath(); ctx.moveTo(L, Y(t.bp)); ctx.lineTo(R, Y(t.bp)); ctx.stroke(); ctx.setLineDash([]);
+    const bw = Math.max(1, Math.min(6, (R - L) / p.d.length - 1));
+    for (let i = 0; i < p.d.length; i++) {
+      ctx.fillStyle = p.c[i] >= t.bp ? 'rgba(52,211,153,.45)' : 'rgba(251,113,133,.45)';
+      ctx.fillRect(X(i) - bw / 2, Y(p.h[i]), bw, Math.max(1, Y(p.l[i]) - Y(p.h[i])));
+    }
+    ctx.strokeStyle = '#22d3ee'; ctx.lineWidth = 2; ctx.beginPath();
+    p.c.forEach((c, i) => (i ? ctx.lineTo(X(i), Y(c)) : ctx.moveTo(X(i), Y(c))));
+    ctx.stroke();
+    ctx.fillStyle = '#ffd60a';
+    for (const i of p.b) { ctx.beginPath(); ctx.arc(X(i), Y(p.l[i]) + 6, 3, 0, 7); ctx.fill(); }
+    ctx.fillStyle = '#9aa6c4';
+    ctx.fillText(tgl(p.d[0]), L, H - 5);
+    ctx.textAlign = 'right'; ctx.fillText(tgl(p.d[p.d.length - 1]), R, H - 5); ctx.textAlign = 'left';
+  }
+
+  async function toggleDetail(tr) {
+    const next = tr.nextElementSibling;
+    if (next && next.classList.contains('path-row')) { next.remove(); return; }
+    const k = Number(tr.dataset.ti);
+    const t = ui.res.trades[k];
+    const paths = ui.loadPaths ? await ui.loadPaths() : null;
+    const p = paths && paths.paths[k];
+    if (!p) return;
+    const row = document.createElement('tr');
+    row.className = 'path-row';
+    const minL = Math.min(...p.l), maxH = Math.max(...p.h);
+    row.innerHTML = `<td colspan="99"><div class="path-box"><div class="muted">${t.s} · ${tgl(t.bd)} → ${tgl(t.sd)} · ${p.d.length} hari · ` +
+      `turun terdalam ${num((minL / t.bp - 1) * 100)}% · naik tertinggi ${num((maxH / t.bp - 1) * 100)}% · ` +
+      `titik kuning = sinyal Buy lagi (${p.b.length}×) · garis putus = harga Buy</div><canvas class="path-cv"></canvas></div></td>`;
+    tr.after(row);
+    drawPath(row.querySelector('canvas'), t, p);
+  }
+
+  function bind(onChart, loadPaths) {
+    ui.loadPaths = loadPaths;
+    $('st-csv-path').addEventListener('click', async () => {
+      if (!ui.res) return;
+      const paths = await loadPaths();
+      if (!paths) return;
+      const blob = new Blob([Study.pathsToCSV(ui.res, paths)], { type: 'text/csv;charset=utf-8' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `jejak-harian-${ui.res.params.fromYear}-${ui.res.params.toYear}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+    });
     ['st-thr', 'st-type', 'st-split', 'st-open'].forEach((id) => $(id).addEventListener('change', render));
     $('st-search').addEventListener('input', () => { ui.limit = 300; renderTrades(); });
     $('st-more').addEventListener('click', () => { ui.limit += 300; renderTrades(); });
@@ -122,6 +185,8 @@
     $('st-trades').addEventListener('click', (e) => {
       const a = e.target.closest('[data-chart]');
       if (a) { e.preventDefault(); onChart(a.dataset.chart); return; }
+      const tr = e.target.closest('tr.trade-row');
+      if (tr) { toggleDetail(tr); return; }
       const th = e.target.closest('th[data-k]');
       if (th) {
         const k = th.dataset.k;
