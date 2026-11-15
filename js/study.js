@@ -105,6 +105,9 @@
     let symbolsDone = 0;
     let guessed = 0;
     const always = new Set(['^JKSE', ...SECTORS]);
+    const sig = o.collectSig ? new Map() : null; // sinyal ringkas untuk uji portofolio
+    const universe = new Set();
+    const ruleKeys = o.engine.rules ? o.engine.rules.map((q) => q.key) : [];
 
     for (let g = 0; g < groups; g++) {
       // a. muat riwayat hanya untuk kelompok saham ini (+ ^JKSE dan indeks sektor)
@@ -146,6 +149,32 @@
         if (s.C.length < (o.engine.minBars || 80)) continue;
         const f = o.engine.features(s, { base });
         const n = s.C.length;
+
+        if (sig) {
+          let i0 = 0;
+          while (i0 < n && s.date[i0] < from) i0++;
+          let i1 = i0;
+          while (i1 < n && s.date[i1] <= to) i1++;
+          if (i1 > i0) {
+            const m = i1 - i0;
+            const z = { date: new Int32Array(m), C: new Float32Array(m), buyRaw: new Uint8Array(m), buyFirst: new Uint8Array(m), sellRaw: new Uint8Array(m), power: new Float32Array(m), flags: null };
+            if (ruleKeys.length) z.flags = Object.fromEntries(ruleKeys.map((k) => [k, new Uint8Array(m)]));
+            const keys = Object.keys(f.values);
+            for (let i = i0; i < i1; i++) {
+              const q = i - i0;
+              z.date[q] = s.date[i]; z.C[q] = s.C[i]; z.power[q] = f.power[i];
+              z.buyRaw[q] = f.buyRaw[i] ? 1 : 0; z.buyFirst[q] = f.buy[i] ? 1 : 0; z.sellRaw[q] = f.sellRaw[i] ? 1 : 0;
+              if (z.flags && (f.buy[i] || f.buyRaw[i])) {
+                const row = {};
+                for (const k of keys) row[k] = f.values[k][i];
+                const res = o.engine.ruleCheck(row);
+                for (const k of ruleKeys) if (res[k]) z.flags[k][q] = 1;
+              }
+            }
+            sig.set(sym, z);
+            universe.add(sym);
+          }
+        }
 
         // breadth: kumpulkan hitungan per tanggal
         const ma50 = AFL.MA(s.C, 50), ma200 = AFL.MA(s.C, 200);
@@ -219,7 +248,39 @@
       },
       paths: { v: 1, created: new Date().toISOString(), paths },
       firstDates,
+      sig, universe,
     };
+  }
+
+  // ------------------------------------------------------------------ aturan hasil studi
+
+  /**
+   * Terapkan aturan (dari formula privat) ke daftar trade.
+   * @param res hasil collect().result; rules = [{key, kind, label}]; check(f) → {key: bool}; on = {key: bool}
+   * @returns {res: hasil dengan trade yang lolos saja, size(t): 1 atau 0,5, dropped: {key: jumlah}, removed: jumlah, total}
+   */
+  function applyRules(res, rules, check, on) {
+    const act = (rules || []).filter((q) => on[q.key]);
+    if (!act.length || !check) return { res, size: () => 1, dropped: {}, removed: 0, total: res.trades.length, active: false };
+    const keys = res.featureList.map((m) => m.key);
+    const memo = new Map();
+    const evalT = (t) => {
+      let r = memo.get(t);
+      if (!r) { const row = {}; keys.forEach((k, i) => { row[k] = t.f[i]; }); r = check(row); memo.set(t, r); }
+      return r;
+    };
+    const dropped = {};
+    const kept = [];
+    for (const t of res.trades) {
+      const r = evalT(t);
+      const by = act.filter((q) => q.kind === 'filter' && r[q.key]);
+      for (const q of by) dropped[q.key] = (dropped[q.key] || 0) + 1;
+      if (by.length) continue;
+      kept.push(t);
+    }
+    const sizers = act.filter((q) => q.kind === 'size');
+    const size = (t) => (sizers.some((q) => evalT(t)[q.key]) ? 0.5 : 1);
+    return { res: { ...res, trades: kept }, size, dropped, removed: res.trades.length - kept.length, total: res.trades.length, active: true };
   }
 
   // ------------------------------------------------------------------ statistik
@@ -297,10 +358,11 @@
   const cell = (v) => (v === null || v === undefined ? '' : typeof v === 'number' ? String(v).replace('.', ',') : `"${String(v).replace(/"/g, '""')}"`);
 
   /** Daftar trade → teks CSV (pemisah titik koma, cocok untuk Excel Indonesia). */
-  function toCSV(res, win) {
+  function toCSV(res, win, size) {
     const head = ['No', 'Saham', 'Tgl Buy', 'Harga Buy', 'Tgl Sell', 'Harga Sell', 'Bar', 'Masih terbuka', 'Buy selama dipegang', 'Gain akhir %', 'Gain maks %', 'Pemenang',
-      ...res.featureList.map((m) => m.label)];
-    const lines = res.trades.map((t, k) => [k + 1, t.s, d2s(t.bd), t.bp, d2s(t.sd), t.sp, t.n, t.o ? 'ya' : '', t.b ?? '', t.g, t.m, win(t) ? 'ya' : '', ...t.f].map(cell).join(';'));
+      ...(size ? ['Ukuran posisi', 'Gain akhir tertimbang %'] : []), ...res.featureList.map((m) => m.label)];
+    const lines = res.trades.map((t, k) => [k + 1, t.s, d2s(t.bd), t.bp, d2s(t.sd), t.sp, t.n, t.o ? 'ya' : '', t.b ?? '', t.g, t.m, win(t) ? 'ya' : '',
+      ...(size ? [size(t), round(t.g * size(t))] : []), ...t.f].map(cell).join(';'));
     return '﻿' + [head.map(cell).join(';'), ...lines].join('\r\n');
   }
 
@@ -320,7 +382,26 @@
     return '﻿' + out.join('\r\n');
   }
 
-  const Study = { collect, analyze, toCSV, pathsToCSV, buildFirstDates, parseSectorMap, median, SECTORS, EXTRA };
+  /** Hasil uji portofolio (dua varian) → CSV ringkasan per tahun + daftar transaksi tertutup. */
+  function portoToCSV(pt) {
+    const out = [];
+    const L = (arr) => out.push(arr.map(cell).join(';'));
+    L(['Uji portofolio', `modal Rp ${pt.params.modal}`, `${pt.params.slots} slot`, `porsi ${pt.params.firstPct}/${pt.params.addPct}`, `fee ${pt.params.feeBuy}/${pt.params.feeSell}`,
+      `pemicu ${pt.params.entryMode}`, `bawaan ${pt.params.carry ? 'ya' : 'tidak'}`]);
+    L([]);
+    L(['Varian', 'Tahun', 'Laba/rugi (Rp)', 'Return %', 'Trade tertutup', 'Win rate %', 'Drawdown maks %', 'Posisi terbuka akhir tahun', 'Buy dibuang aturan', 'Trade setengah porsi']);
+    for (const v of pt.variants) {
+      for (const y of v.years) L([v.name, y.year, Math.round(y.pl), round(y.ret), y.trades, y.trades ? round((y.wins / y.trades) * 100) : null, round(y.dd), y.open, y.dropped, y.half]);
+      const t = v.total;
+      L([v.name, 'TOTAL', Math.round(t.pl), `rata2 ${round(t.avgRet)} / majemuk ${round(t.compound)}`, t.trades, round(t.winRate), round(t.worstDD), '', t.dropped, t.half]);
+    }
+    L([]);
+    L(['Varian', 'Tahun', 'Saham', 'Tgl masuk', 'Tgl keluar', 'Harga keluar', 'Jumlah beli', 'Setengah porsi', 'Asal', 'Modal terpakai (Rp)', 'Laba/rugi (Rp)', 'Laba/rugi %']);
+    for (const v of pt.variants) for (const t of v.trades) L([v.name, t.year, t.sym, d2s(t.entry), d2s(t.exit), t.price, t.buys, t.half ? 'ya' : '', t.source, Math.round(t.cost), Math.round(t.pl), round(t.plPct)]);
+    return '\ufeff' + out.join('\r\n');
+  }
+
+  const Study = { collect, analyze, toCSV, portoToCSV, applyRules, pathsToCSV, buildFirstDates, parseSectorMap, median, SECTORS, EXTRA };
   global.Study = Study;
   if (typeof module !== 'undefined' && module.exports) module.exports = Study;
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -68,7 +68,7 @@
     const free = r.cfg.slots - r.systemCount;
     $('po-cand-info').textContent = `${tgl(r.lastDate)} · slot kosong ${Math.max(free, 0)} · urut Power tertinggi`;
     const candRows = r.candidates.map((c) => {
-      const lots = c.lots ?? Portfolio.lotsFor(r.perStock * r.cfg.firstPct / 100, c.price, r.cfg.feeBuy);
+      const lots = c.lots ?? Portfolio.lotsFor(r.perStock * (c.half ? r.cfg.firstPct / 2 : r.cfg.firstPct) / 100, c.price, r.cfg.feeBuy);
       const decided = h.decision(c.key);
       let action;
       if (decided) {
@@ -80,9 +80,9 @@
       } else {
         action = `<span class="hint">${c.status}</span>`;
       }
-      const rowCls = c.status === 'disarankan' ? 'hl-new' : c.status === 'slot penuh' ? 'dim' : c.status === 'lewati' ? 'skipped' : '';
-      const label = { disarankan: 'Masuk porto', 'slot penuh': 'Slot penuh', dibeli: 'Dibeli', lewati: 'Dilewati' }[c.status] || c.status;
-      return `<tr class="${rowCls}"><td><a href="#" data-chart="${c.sym}">${c.sym}</a>${c.provisional ? '<span class="badge">S</span>' : ''}</td>
+      const rowCls = c.status === 'disarankan' ? 'hl-new' : c.status === 'slot penuh' || c.status === 'dibuang aturan' ? 'dim' : c.status === 'lewati' ? 'skipped' : '';
+      const label = { disarankan: 'Masuk porto', 'slot penuh': 'Slot penuh', dibeli: 'Dibeli', lewati: 'Dilewati', 'dibuang aturan': 'Dibuang aturan' }[c.status] || c.status;
+      return `<tr class="${rowCls}"><td><a href="#" data-chart="${c.sym}">${c.sym}</a>${c.provisional ? '<span class="badge">S</span>' : ''}${c.half ? '<span class="badge" title="setengah porsi">½</span>' : ''}</td>
         <td>${num(c.power, 2)}</td><td>${num(c.price)}</td><td>${num(lots)}</td><td class="txt">${label}</td><td class="txt">${action}</td></tr>`;
     }).join('');
     $('po-cands').innerHTML = `<thead><tr><th>Saham</th><th>Power</th><th>Harga</th><th>Saran lot</th><th>Status</th><th>Aksi</th></tr></thead>

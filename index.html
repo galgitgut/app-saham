@@ -7,7 +7,7 @@
   <title>Binar Saujana App</title>
   <link rel="manifest" href="manifest.json">
   <link rel="icon" href="icon.svg" type="image/svg+xml">
-  <link rel="stylesheet" href="css/style.css?v=20261114c">
+  <link rel="stylesheet" href="css/style.css?v=20261115a">
 </head>
 <body>
   <header class="topbar">
@@ -80,6 +80,7 @@
           </label>
           <label class="field check"><input id="pc-carry" type="checkbox"> Bawa posisi tahun lalu (tahan sampai Sell, pakai kas, tanpa slot)</label>
         </div>
+        <div id="pc-rules" class="rules"></div>
         <button id="pc-apply" class="primary">Terapkan</button>
         <p class="muted">Backtest selalu mulai awal tahun berjalan (reset). Posisi bawaan tahun lalu hanya ditahan sampai Sell; dana hasil jualnya kembali ke kas untuk saham baru. Perubahan modal hanya berlaku untuk pembelian sejak tanggal "berlaku mulai"; pembelian lama tidak diubah. Sebelum tanggal "mulai mencatat keputusan", semua sinyal dianggap dibeli (backtest murni).</p>
         <div id="pc-modal-list" class="log"></div>
@@ -136,6 +137,8 @@
           <label class="field">Sampai tahun<select id="st-to"></select></label>
         </div>
         <label class="field check"><input id="st-clean" type="checkbox" checked> Hapus arsip dari perangkat setelah selesai (app tetap ringan)</label>
+        <label class="field check"><input id="st-porto" type="checkbox" checked> Sekaligus uji di simulasi Portofolio (aturan dinyalakan vs dimatikan)</label>
+        <label class="field">Modal uji portofolio per tahun (Rp)<input id="st-modal" type="number" inputmode="numeric" placeholder="modal Portofolio / 100000000"></label>
         <button id="st-run" class="primary">Jalankan analisa</button>
       </div>
 
@@ -150,11 +153,21 @@
             <label class="field">Periode studi s.d. tahun<select id="st-split"></select></label>
             <label class="field check"><input id="st-open" type="checkbox"> Sertakan trade yang masih terbuka</label>
           </div>
+          <div id="st-rules" class="rules"></div>
+          <div id="st-rules-info" class="muted"></div>
           <button id="st-csv">Unduh CSV trade</button>
           <button id="st-csv-path">Unduh jejak harian (CSV)</button>
           <p class="muted">Ketuk baris trade untuk melihat jejak hariannya. Sektor diambil dari <code>config/sektor.txt</code> di repo data (format <code>KODE;IDXFINANCE</code> per baris); kalau file itu belum ada, sektor ditebak dari korelasi harga dengan indeks sektor IDX-IC.</p>
         </div>
         <div id="st-summary" class="stats"></div>
+        <div class="card" id="st-porto-card" hidden>
+          <h3>Uji di simulasi Portofolio</h3>
+          <div id="st-porto-meta" class="muted"></div>
+          <div class="table-wrap"><table id="st-porto-total" class="grid"></table></div>
+          <div class="table-wrap"><table id="st-porto-years" class="grid"></table></div>
+          <button id="st-porto-csv">Unduh CSV uji portofolio</button>
+          <p class="muted">Tiap tahun mulai dari nol dengan modal yang sama (seperti tab Portofolio), semua sinyal dianggap dibeli otomatis. Laba/rugi tahun = laba terealisasi + perubahan laba berjalan posisi yang terbawa. Drawdown = penurunan terdalam ekuitas dari puncaknya di tahun itu.</p>
+        </div>
         <div class="card">
           <h3>Indikator angka: pemenang vs semua trade</h3>
           <p class="muted">Win rate per kuartil: trade dibagi 4 kelompok sama besar menurut nilai indikator (Q1 terendah, Q4 tertinggi). Kolom "Uji" memakai batas kuartil yang sama di periode setelah tahun studi; pola yang bagus tetap terlihat di sana. Urutan: indikator yang paling membedakan di atas.</p>
@@ -244,16 +257,16 @@
   <div id="toast" class="toast" hidden></div>
 
   <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
-  <script src="js/afl.js?v=20261114c"></script>
-  <script src="js/amibroker.js?v=20261114c"></script>
-  <script src="js/data.js?v=20261114c"></script>
-  <script src="js/github.js?v=20261114c"></script>
-  <script src="js/screening.js?v=20261114c"></script>
-  <script src="js/portfolio.js?v=20261114c"></script>
-  <script src="js/portfolio-ui.js?v=20261114c"></script>
-  <script src="js/study.js?v=20261114c"></script>
-  <script src="js/study-ui.js?v=20261114c"></script>
-  <script src="js/chart.js?v=20261114c"></script>
-  <script src="js/app.js?v=20261114c"></script>
+  <script src="js/afl.js?v=20261115a"></script>
+  <script src="js/amibroker.js?v=20261115a"></script>
+  <script src="js/data.js?v=20261115a"></script>
+  <script src="js/github.js?v=20261115a"></script>
+  <script src="js/screening.js?v=20261115a"></script>
+  <script src="js/portfolio.js?v=20261115a"></script>
+  <script src="js/portfolio-ui.js?v=20261115a"></script>
+  <script src="js/study.js?v=20261115a"></script>
+  <script src="js/study-ui.js?v=20261115a"></script>
+  <script src="js/chart.js?v=20261115a"></script>
+  <script src="js/app.js?v=20261115a"></script>
 </body>
 </html>

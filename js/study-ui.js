@@ -10,7 +10,8 @@
   const cls = (x) => (x > 0 ? 'up' : x < 0 ? 'down' : '');
   const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
-  const ui = { res: null, an: null, filter: 'win', sort: { key: 'bd', dir: -1 }, limit: 300, idx: new Map(), loadPaths: null };
+  const ui = { res: null, an: null, filter: 'win', sort: { key: 'bd', dir: -1 }, limit: 300, idx: new Map(), loadPaths: null, rules: () => [], engine: () => null, ru: null, on: {} };
+  const rp = (x) => (Number.isFinite(x) ? 'Rp ' + Math.round(x).toLocaleString('id-ID') : '-');
 
   /** Sel win rate berwarna: makin tinggi dibanding rata-rata, makin hijau. */
   function rateCell(v, base, best) {
@@ -34,13 +35,32 @@
       splitYear: Number($('st-split').value) || null,
       includeOpen: $('st-open').checked,
     };
-    const an = Study.analyze(res, opt);
+    // aturan hasil studi (opsional): buang trade yang kena filter, tandai setengah porsi
+    const E = ui.engine();
+    const ru = Study.applyRules(res, ui.rules(), E && E.ruleCheck, ui.on);
+    ui.ru = ru;
+    const base0 = ru.active ? Study.analyze(res, opt).summary : null;
+    const an = Study.analyze(ru.res, opt);
     ui.an = an;
     const s = an.summary;
+    let wAvg = NaN;
+    if (ru.active) {
+      const list = opt.includeOpen ? ru.res.trades : ru.res.trades.filter((t) => !t.o);
+      const split = opt.splitYear ? opt.splitYear * 10000 + 1231 : Infinity;
+      const st = list.filter((t) => t.bd <= split);
+      const w = st.reduce((a, t) => a + ru.size(t), 0);
+      wAvg = w ? st.reduce((a, t) => a + t.g * ru.size(t), 0) / w : NaN;
+      const rules = ui.rules();
+      $('st-rules-info').innerHTML = `Dibuang ${ru.removed.toLocaleString('id-ID')} dari ${ru.total.toLocaleString('id-ID')} trade (` +
+        rules.filter((q) => q.kind === 'filter' && ui.on[q.key]).map((q) => `${esc(q.label)}: ${(ru.dropped[q.key] || 0).toLocaleString('id-ID')}`).join(' · ') + ')' +
+        (rules.some((q) => q.kind === 'size' && ui.on[q.key]) ? ` · setengah porsi: ${ru.res.trades.filter((t) => ru.size(t) < 1).length.toLocaleString('id-ID')} trade` : '') +
+        ` · tanpa aturan: ${base0.total.toLocaleString('id-ID')} trade, win ${num(base0.winRate)}%, rata-rata gain ${num(base0.avgGain)}%`;
+    } else $('st-rules-info').textContent = '';
     $('st-summary').innerHTML = [
       ['Trade (periode studi)', s.total.toLocaleString('id-ID'), ''],
       ['Pemenang', `${s.winners.toLocaleString('id-ID')} (${num(s.winRate)}%)`, 'up'],
       ['Rata-rata gain akhir', `${num(s.avgGain)}%`, cls(s.avgGain)],
+      ...(Number.isFinite(wAvg) ? [['Rata-rata gain tertimbang ukuran', `${num(wAvg)}%`, cls(wAvg)]] : []),
       ['Median gain pemenang', `${num(s.avgGainWin)}%`, 'up'],
       ['Median lama pegang', `${num(s.medHold, 0)} bar`, ''],
       ...(opt.splitYear ? [['Periode uji', `${s.testTotal.toLocaleString('id-ID')} trade · win ${num(s.testRate)}%`, '']] : []),
@@ -65,10 +85,49 @@
       <td>${num(c.shareWin)}%</td><td>${num(c.shareAll)}%</td>${rateCell(c.rate, base, false)}${opt.splitYear ? rateCell(c.test, baseT, false) : ''}</tr>`).join('')).join('')}</tbody>`;
 
     renderTrades();
+    renderPorto();
+  }
+
+  /** Hasil uji portofolio (dihitung saat analisa): dua varian berdampingan. */
+  function renderPorto() {
+    const pt = ui.res && ui.res.porto;
+    $('st-porto-card').hidden = !pt;
+    if (!pt) return;
+    const P = pt.params;
+    $('st-porto-meta').innerHTML = `Modal ${rp(P.modal)} per tahun · ${P.slots} slot · porsi ${P.firstPct}/${P.addPct} · fee ${num(P.feeBuy, 2)}%/${num(P.feeSell, 2)}% · ` +
+      `pemicu ${P.entryMode === 'raw' ? 'setiap Buy' : 'Buy pertama setelah Sell'} · bawaan ${P.carry ? 'ya' : 'tidak'}<br>Aturan: ${pt.rules.map(esc).join(' · ')}`;
+    const V = pt.variants;
+    const row = (label, f, c) => `<tr><td class="txt">${label}</td>${V.map((v) => `<td class="${c ? c(v.total) : ''}">${f(v.total)}</td>`).join('')}</tr>`;
+    $('st-porto-total').innerHTML = `<thead><tr><th>${P.fromYear}–${P.toYear}</th>${V.map((v) => `<th>${esc(v.name)}</th>`).join('')}</tr></thead><tbody>` + [
+      row('Total laba/rugi', (t) => rp(t.pl), (t) => cls(t.pl)),
+      row('Rata-rata return per tahun', (t) => `${num(t.avgRet)}%`, (t) => cls(t.avgRet)),
+      row('Return majemuk (bila diputar)', (t) => `${num(t.compound)}%`, (t) => cls(t.compound)),
+      row('Tahun untung', (t) => `${t.posYears} dari ${t.years}`),
+      row('Trade tertutup', (t) => t.trades.toLocaleString('id-ID')),
+      row('Win rate', (t) => `${num(t.winRate)}%`),
+      row('Rata-rata laba/rugi per trade', (t) => `${num(t.avgTrade)}%`, (t) => cls(t.avgTrade)),
+      row('Drawdown terdalam (dalam 1 tahun)', (t) => `${num(t.worstDD)}%`, () => 'down'),
+      row('Buy dibuang aturan', (t) => t.dropped.toLocaleString('id-ID')),
+      row('Trade setengah porsi', (t) => t.half.toLocaleString('id-ID')),
+    ].join('') + '</tbody>';
+    const years = V[0].years.map((y) => y.year);
+    $('st-porto-years').innerHTML = `<thead><tr><th>Tahun</th>${V.map((v) => `<th>${esc(v.name)}: return</th><th>trade · win</th><th>DD</th>`).join('')}</tr></thead><tbody>` +
+      years.map((yr) => `<tr><td>${yr}</td>${V.map((v) => {
+        const y = v.years.find((x) => x.year === yr);
+        if (!y) return '<td>-</td><td>-</td><td>-</td>';
+        return `<td class="${cls(y.ret)}">${num(y.ret)}%</td><td>${y.trades} · ${y.trades ? num((y.wins / y.trades) * 100, 0) : '-'}%</td><td class="down">${num(y.dd)}%</td>`;
+      }).join('')}</tr>`).join('') + '</tbody>';
+  }
+
+  function renderRules() {
+    const rules = ui.rules();
+    $('st-rules').innerHTML = rules.length
+      ? '<div class="rules-title">Terapkan aturan (tanpa menghitung ulang)</div>' + rules.map((q) => `<label><input type="checkbox" data-st-rule="${q.key}" ${ui.on[q.key] ? 'checked' : ''}> ${esc(q.label)}</label>`).join('')
+      : '';
   }
 
   function renderTrades() {
-    const res = ui.res;
+    const res = ui.ru && ui.ru.active ? ui.ru.res : ui.res;
     const an = ui.an;
     const q = $('st-search').value.trim().toUpperCase();
     let list = res.trades;
@@ -95,6 +154,15 @@
     $('st-more').hidden = list.length <= ui.limit;
   }
 
+  function download(text, name) {
+    const blob = new Blob([text], { type: 'text/csv;charset=utf-8' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
   function setResult(res) {
     ui.res = res;
     ui.limit = 300;
@@ -106,6 +174,7 @@
       $('st-split').innerHTML = '<option value="">Tanpa periode uji</option>' + ys.map((y) => `<option value="${y}">${y} (uji ${y + 1}–${res.params.toYear})</option>`).join('');
       if (cur && ys.includes(Number(cur))) $('st-split').value = cur;
     }
+    renderRules();
     render();
   }
 
@@ -158,8 +227,21 @@
     drawPath(row.querySelector('canvas'), t, p);
   }
 
-  function bind(onChart, loadPaths) {
+  function bind(onChart, loadPaths, rules, engine) {
     ui.loadPaths = loadPaths;
+    if (rules) ui.rules = rules;
+    if (engine) ui.engine = engine;
+    $('st-rules').addEventListener('change', (e) => {
+      const k = e.target.getAttribute('data-st-rule');
+      if (!k) return;
+      ui.on[k] = e.target.checked;
+      ui.limit = 300;
+      render();
+    });
+    $('st-porto-csv').addEventListener('click', () => {
+      if (!ui.res || !ui.res.porto) return;
+      download(Study.portoToCSV(ui.res.porto), `uji-portofolio-${ui.res.params.fromYear}-${ui.res.params.toYear}.csv`);
+    });
     $('st-csv-path').addEventListener('click', async () => {
       if (!ui.res) return;
       const paths = await loadPaths();
@@ -196,12 +278,9 @@
     });
     $('st-csv').addEventListener('click', () => {
       if (!ui.res) return;
-      const blob = new Blob([Study.toCSV(ui.res, ui.an.win)], { type: 'text/csv;charset=utf-8' });
-      const a = document.createElement('a');
-      a.href = URL.createObjectURL(blob);
-      a.download = `studi-trade-${ui.res.params.fromYear}-${ui.res.params.toYear}.csv`;
-      a.click();
-      setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      const act = ui.ru && ui.ru.active;
+      download(Study.toCSV(act ? ui.ru.res : ui.res, ui.an.win, act ? ui.ru.size : null),
+        `studi-trade-${ui.res.params.fromYear}-${ui.res.params.toYear}${act ? '-aturan' : ''}.csv`);
     });
   }
 

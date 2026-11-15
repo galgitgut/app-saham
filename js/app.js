@@ -274,9 +274,17 @@
     const ctx = screenCtx();
     const sig = new Map();
     const universe = new Set();
+    const E = state.engines.binarsaujana;
+    const rules = E.rules && E.ruleFlags ? E.rules : [];
+    const useRules = rules.some((q) => cfg.rules && cfg.rules[q.key]);
     const addSig = (sym) => {
       const res = Screening.compute(ctx, 'binarsaujana', sym);
-      if (res) sig.set(sym, { date: res.s.date, C: res.s.C, P: res.s.P, buyRaw: res.r.buyRaw, buyFirst: res.r.buy, sellRaw: res.r.sellRaw, power: res.r.positionScore });
+      if (res) {
+        sig.set(sym, {
+          date: res.s.date, C: res.s.C, P: res.s.P, buyRaw: res.r.buyRaw, buyFirst: res.r.buy, sellRaw: res.r.sellRaw, power: res.r.positionScore,
+          flags: useRules ? E.ruleFlags(res.s, { base: ctx.base }, res.r) : null,
+        });
+      }
       return !!res;
     };
     for (const sym of state.db.symbols()) {
@@ -285,7 +293,7 @@
     }
     for (const m of state.book.manual) if (!sig.has(m.sym) && state.db.get(m.sym)) addSig(m.sym);
     const run = { ...cfg, decideFrom: cfg.decideFrom || last }; // tahun berjalan selalu mulai 1 Jan
-    state.porto = Portfolio.simulateYear({ sig, universe, cfg: run, book: state.book, lastDate: last });
+    state.porto = Portfolio.simulateYear({ sig, universe, cfg: run, rules, book: state.book, lastDate: last });
     PortfolioUI.render(state.porto, { decision: (k) => state.book.decisions[k], histFilter: state.histFilter });
     if (!$('mn-date').value) $('mn-date').value = toInputDate(last);
     renderManualList();
@@ -331,6 +339,7 @@
     $('pc-decide').value = toInputDate(c.decideFrom || last);
     $('pc-entry').value = c.entryMode;
     $('pc-carry').checked = c.carry;
+    renderRuleBoxes('pc-rules', 'pc-rule', c.rules || {}, 'Aturan hasil studi (opsional)');
     $('pc-modal-list').textContent = c.modal.length
       ? 'Riwayat modal:\n' + [...c.modal].sort((a, b) => a.d - b.d).map((m) => `  mulai ${Screening.fmtDate(m.d)}: Rp ${Math.round(m.value).toLocaleString('id-ID')}`).join('\n')
       : '';
@@ -353,8 +362,26 @@
     c.decideFrom = fromInputDate($('pc-decide').value) || 0;
     c.entryMode = $('pc-entry').value;
     c.carry = $('pc-carry').checked;
+    c.rules = readRuleBoxes('pc-rule');
     openSettings();
     markDirty();
+  }
+
+  /** Kotak centang aturan (daftar aturan datang dari formula privat). */
+  function engineRules() {
+    const E = state.engines.binarsaujana;
+    return E && E.rules ? E.rules : [];
+  }
+  function renderRuleBoxes(id, prefix, on, title) {
+    const rules = engineRules();
+    $(id).innerHTML = rules.length
+      ? `<div class="rules-title">${title}</div>` + rules.map((q) => `<label><input type="checkbox" data-${prefix}="${q.key}" ${on[q.key] ? 'checked' : ''}> ${q.label}</label>`).join('')
+      : '';
+  }
+  function readRuleBoxes(prefix) {
+    const out = {};
+    document.querySelectorAll(`[data-${prefix}]`).forEach((x) => { out[x.getAttribute(`data-${prefix}`)] = x.checked; });
+    return out;
   }
 
   function renderManualList() {
@@ -506,10 +533,30 @@
       const sectorMap = sectorText ? Study.parseSectorMap(sectorText) : null;
       const out = await Study.collect({
         gh: state.gh, files: state.files.tahun, engine: E, exclude: state.exclude, firstDates, sectorMap,
+        collectSig: $('st-porto').checked,
         isStock: (sym, d) => /^[A-Z]{4}$/.test(sym) && (Data.isIdxStock(d, sym) || Data.isIdxStock(state.db, sym) || /tbk/i.test(d.names[sym] || state.db.names[sym] || '')),
         params: { fromYear, toYear, feeBuy: state.book ? state.book.cfg.feeBuy : 0.18, feeSell: state.book ? state.book.cfg.feeSell : 0.28 },
         progress: (f, m) => Busy.set(p0 + f * (0.9 - p0), m),
       });
+      if (out.sig) {
+        const c = state.book ? state.book.cfg : Portfolio.DEFAULT_CFG;
+        const cur = c.modal && c.modal.length ? [...c.modal].sort((a, b) => a.d - b.d).at(-1).value : 0;
+        const modal = Number($('st-modal').value) || cur || 100000000;
+        const params = { modal, slots: c.slots, firstPct: c.firstPct, addPct: c.addPct, feeBuy: c.feeBuy, feeSell: c.feeSell, entryMode: c.entryMode, carry: c.carry, fromYear, toYear };
+        const rules = E.rules || [];
+        const variants = [];
+        for (const [k, name, on] of [[0, 'Aturan dinyalakan', true], [1, 'Aturan dimatikan', false]]) {
+          const r = Portfolio.simulateRange({
+            sig: out.sig, universe: out.universe, rules, fromYear, toYear, modal,
+            cfg: { ...c, rules: Object.fromEntries(rules.map((q) => [q.key, on])) },
+            progress: (f, m) => Busy.set(0.9 + 0.005 * (k + f), `${name}: ${m}`),
+          });
+          variants.push({ name, on, ...r });
+          await new Promise((res) => setTimeout(res, 0));
+        }
+        out.result.porto = { params, rules: rules.map((q) => q.label), variants };
+        out.sig = null;
+      }
       Busy.set(0.91, 'Mengemas hasil…');
       const files = [
         { path: 'studi/terakhir.json.gz', bytes: await Data.gzipJSON(out.result) },
@@ -768,7 +815,7 @@
   });
   $('tab-porto').addEventListener('click', onPortoClick);
   $('st-run').addEventListener('click', runStudy);
-  StudyUI.bind((sym) => switchTab('chart', sym), loadStudyPaths);
+  StudyUI.bind((sym) => switchTab('chart', sym), loadStudyPaths, engineRules, () => state.engines.binarsaujana);
   $('po-save').addEventListener('click', saveBook);
   $('pc-apply').addEventListener('click', applySettings);
   $('mn-add').addEventListener('click', addManual);

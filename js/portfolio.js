@@ -9,6 +9,9 @@
  *  - Slot kosong diisi kandidat Buy hari itu, urut Power tertinggi. Dilewati → kandidat berikutnya.
  *  - Lot = jumlah lot terbanyak yang (harga × lot × 100 + fee beli) masih ≤ jatah pembelian.
  *  - Saham manual tidak memakai slot (portofolio bisa > 9).
+ *  - Aturan tambahan (opsional, dari formula privat): o.rules = [{key, kind:'filter'|'size'}], tanda per bar di
+ *    sig.flags[key]; cfg.rules = {key: true/false}. 'filter' membuang Buy baru; 'size' membuat posisi setengah porsi
+ *    (masuk dan tambah porsi).
  *
  * Keputusan pengguna (book.decisions) per kunci "yyyymmdd|SIMBOL|NEW" atau "...|ADD":
  *   { act: 'approve' | 'skip', lots?, price? }   lots/price = hasil edit (kalau beli tidak sesuai saran)
@@ -22,7 +25,7 @@
 (function (global) {
   'use strict';
 
-  const DEFAULT_CFG = { slots: 9, firstPct: 60, addPct: 20, feeBuy: 0.18, feeSell: 0.28, modal: [], start: 0, decideFrom: 0, entryMode: 'exrem', carry: true };
+  const DEFAULT_CFG = { slots: 9, firstPct: 60, addPct: 20, feeBuy: 0.18, feeSell: 0.28, modal: [], start: 0, decideFrom: 0, entryMode: 'exrem', carry: true, rules: {} };
 
   /** Modal yang berlaku pada tanggal d. */
   function modalAt(cfg, d) {
@@ -77,11 +80,22 @@
     let candidates = []; // kandidat Buy di tanggal terakhir
     const soldToday = [];
     const tradesClosed = [];
+    const equity = [];
+    let dropped = 0;
+    let realizedRun = 0;
 
     const invested = () => { let x = 0; for (const p of pos.values()) x += p.cost; return x; };
     const systemCount = () => { let n = 0; for (const p of pos.values()) if (p.source === 'system') n++; return n; };
     // pemicu masuk baru: 'exrem' = Buy pertama setelah Sell (seperti AmiBroker), 'raw' = setiap Buy
     const entrySig = (s) => (cfg.entryMode === 'raw' ? s.buyRaw : s.buyFirst || s.buyRaw);
+    const active = (o.rules || []).filter((q) => cfg.rules && cfg.rules[q.key]);
+    const filters = active.filter((q) => q.kind === 'filter');
+    const sizers = active.filter((q) => q.kind === 'size');
+    const flag = (sym, i, q) => { const f = o.sig.get(sym).flags; return !!(f && f[q.key] && f[q.key][i]); };
+    /** Aturan filter yang membuang Buy ini (kosong = lolos). */
+    const dropBy = (sym, i) => filters.filter((q) => flag(sym, i, q)).map((q) => q.key);
+    const halfAt = (sym, i) => sizers.some((q) => flag(sym, i, q));
+    const pctOf = (p, base) => (p && p.half ? base / 2 : base);
 
     function undecidedStatus(d) {
       if (d < cfg.decideFrom) return 'auto';
@@ -89,7 +103,7 @@
       return 'tidak diputuskan';
     }
 
-    function buy(sym, d, kind, pct, dec, source) {
+    function buy(sym, d, kind, pct, dec, source, half) {
       const price = dec && dec.price > 0 ? dec.price : close(sym, d);
       const modal = modalAt(cfg, d);
       const perStock = modal / cfg.slots;
@@ -107,7 +121,7 @@
       const fee = value * fb;
       let p = pos.get(sym);
       if (!p) {
-        p = { sym, source, lots: 0, cost: 0, porsi: 0, entry: d, buys: 0 };
+        p = { sym, source, lots: 0, cost: 0, porsi: 0, entry: d, buys: 0, half: !!half };
         pos.set(sym, p);
       }
       p.lots += lots;
@@ -128,7 +142,8 @@
       const costPart = p.cost * (lots / p.lots);
       const pl = value - fee - costPart;
       events.push({ d, sym, type, lots, price, value, fee, status, pl, plPct: (pl / costPart) * 100 });
-      tradesClosed.push({ sym, entry: p.entry, exit: d, pl, cost: costPart });
+      realizedRun += pl;
+      tradesClosed.push({ sym, entry: p.entry, exit: d, pl, cost: costPart, half: !!p.half, source: p.source, buys: p.buys, price });
       p.cost -= costPart;
       p.lots -= lots;
       if (p.lots <= 0) pos.delete(sym);
@@ -163,16 +178,17 @@
         const key = `${d}|${sym}|ADD`;
         handled.add(key);
         const dec = book.decisions[key];
-        if (dec && dec.act === 'skip') { events.push({ d, sym, type: 'TAMBAH', lots: 0, price: close(sym, d), status: 'lewati', pct: cfg.addPct }); continue; }
+        const addPct = pctOf(p, cfg.addPct);
+        if (dec && dec.act === 'skip') { events.push({ d, sym, type: 'TAMBAH', lots: 0, price: close(sym, d), status: 'lewati', pct: addPct }); continue; }
         const st = dec ? 'decided' : undecidedStatus(d);
         if (st === 'pending') {
           const modal = modalAt(cfg, d);
-          const lots = lotsFor(Math.min(modal / cfg.slots * cfg.addPct / 100, Math.max(modal - invested(), 0)), close(sym, d), cfg.feeBuy);
-          pending.push({ key, d, sym, type: 'ADD', price: close(sym, d), lots, porsiNext: p.porsi + cfg.addPct, buyNo: p.buys + 1, power: o.sig.get(sym).power[i] });
+          const lots = lotsFor(Math.min(modal / cfg.slots * addPct / 100, Math.max(modal - invested(), 0)), close(sym, d), cfg.feeBuy);
+          pending.push({ key, d, sym, type: 'ADD', price: close(sym, d), lots, porsiNext: p.porsi + addPct, buyNo: p.buys + 1, power: o.sig.get(sym).power[i], half: p.half });
           continue;
         }
-        if (st === 'tidak diputuskan') { events.push({ d, sym, type: 'TAMBAH', lots: 0, price: close(sym, d), status: st, pct: cfg.addPct }); continue; }
-        buy(sym, d, 'TAMBAH', cfg.addPct, dec, p.source);
+        if (st === 'tidak diputuskan') { events.push({ d, sym, type: 'TAMBAH', lots: 0, price: close(sym, d), status: st, pct: addPct }); continue; }
+        buy(sym, d, 'TAMBAH', addPct, dec, p.source);
       }
 
       // 4. Saham baru: kandidat Buy hari ini, urut Power tertinggi
@@ -181,7 +197,8 @@
         if (pos.has(sym)) continue;
         const i = at(sym, d);
         if (i === undefined || !entrySig(o.sig.get(sym))[i]) continue;
-        cands.push({ sym, power: o.sig.get(sym).power[i], price: o.sig.get(sym).C[i], provisional: o.sig.get(sym).P ? o.sig.get(sym).P[i] === 1 : false });
+        cands.push({ sym, power: o.sig.get(sym).power[i], price: o.sig.get(sym).C[i], provisional: o.sig.get(sym).P ? o.sig.get(sym).P[i] === 1 : false,
+          drop: dropBy(sym, i), half: halfAt(sym, i) });
       }
       cands.sort((a, b) => b.power - a.power);
       let free = cfg.slots - systemCount();
@@ -191,20 +208,22 @@
         const dec = book.decisions[key];
         c.key = key;
         c.slotFree = free > 0;
-        if (dec && dec.act === 'skip') { c.status = 'lewati'; events.push({ d, sym: c.sym, type: 'BELI', lots: 0, price: c.price, status: 'lewati', pct: cfg.firstPct }); continue; }
-        if (dec && dec.act === 'approve') { c.status = buy(c.sym, d, 'BELI', cfg.firstPct, dec, 'system') ? 'dibeli' : 'modal habis'; free--; continue; }
+        const firstPct = c.half ? cfg.firstPct / 2 : cfg.firstPct;
+        if (c.drop.length && !(dec && dec.act === 'approve')) { c.status = 'dibuang aturan'; dropped++; continue; }
+        if (dec && dec.act === 'skip') { c.status = 'lewati'; events.push({ d, sym: c.sym, type: 'BELI', lots: 0, price: c.price, status: 'lewati', pct: firstPct }); continue; }
+        if (dec && dec.act === 'approve') { c.status = buy(c.sym, d, 'BELI', firstPct, dec, 'system', c.half) ? 'dibeli' : 'modal habis'; free--; continue; }
         if (free <= 0) { c.status = 'slot penuh'; continue; }
         const st = undecidedStatus(d);
         if (st === 'pending') {
           const modal = modalAt(cfg, d);
-          c.lots = lotsFor(Math.min(modal / cfg.slots * cfg.firstPct / 100, Math.max(modal - invested(), 0)), c.price, cfg.feeBuy);
+          c.lots = lotsFor(Math.min(modal / cfg.slots * firstPct / 100, Math.max(modal - invested(), 0)), c.price, cfg.feeBuy);
           c.status = 'disarankan';
-          pending.push({ key, d, sym: c.sym, type: 'NEW', price: c.price, lots: c.lots, power: c.power });
+          pending.push({ key, d, sym: c.sym, type: 'NEW', price: c.price, lots: c.lots, power: c.power, half: c.half });
           free--;
           continue;
         }
-        if (st === 'tidak diputuskan') { c.status = st; events.push({ d, sym: c.sym, type: 'BELI', lots: 0, price: c.price, status: st, pct: cfg.firstPct }); continue; }
-        c.status = buy(c.sym, d, 'BELI', cfg.firstPct, null, 'system') ? 'dibeli' : 'modal habis';
+        if (st === 'tidak diputuskan') { c.status = st; events.push({ d, sym: c.sym, type: 'BELI', lots: 0, price: c.price, status: st, pct: firstPct }); continue; }
+        c.status = buy(c.sym, d, 'BELI', firstPct, null, 'system', c.half) ? 'dibeli' : 'modal habis';
         free--;
       }
       if (d === lastDate) candidates = cands;
@@ -214,7 +233,14 @@
         const [kd, sym, type] = key.split('|');
         if (+kd !== d || handled.has(key) || dec.act !== 'approve') continue;
         if (type === 'NEW' && !pos.has(sym)) buy(sym, d, 'BELI', cfg.firstPct, dec, 'system');
-        if (type === 'ADD' && pos.has(sym)) buy(sym, d, 'TAMBAH', cfg.addPct, dec, pos.get(sym).source);
+        if (type === 'ADD' && pos.has(sym)) buy(sym, d, 'TAMBAH', pctOf(pos.get(sym), cfg.addPct), dec, pos.get(sym).source);
+      }
+
+      // 6. kurva ekuitas (opsional, untuk uji portofolio): modal + laba terealisasi + laba berjalan
+      if (o.trackEquity) {
+        let un = 0;
+        for (const p of pos.values()) { const c = close(p.sym, d); if (Number.isFinite(c)) { p.lastC = c; } un += p.lots * 100 * (p.lastC || 0) * (1 - fs) - p.cost; }
+        equity.push([d, realizedRun + un]);
       }
     }
 
@@ -254,6 +280,7 @@
       perSymbol: [...perSym.values()].map((x) => ({ ...x, total: x.realized + x.open, pct: ((x.realized + x.open) / x.cost) * 100 }))
         .sort((a, b) => b.total - a.total),
       systemCount: positions.filter((p) => p.source === 'system').length,
+      trades: tradesClosed, equity, dropped,
       cfg,
     };
   }
@@ -275,14 +302,78 @@
     let prev = null;
     if (cfg.carry) {
       prev = simulate({ ...o, cfg: { ...cfg, start: (year - 1) * 10000 + 101 }, lastDate: (year - 1) * 10000 + 1231, carry: [], noPending: true });
-      carry = prev.positions.map((p) => ({ sym: p.sym, lots: p.lots, cost: p.cost, porsi: p.porsi, entry: p.entry, buys: p.buys }));
+      carry = prev.positions.map((p) => ({ sym: p.sym, lots: p.lots, cost: p.cost, porsi: p.porsi, entry: p.entry, buys: p.buys, half: p.half }));
     }
     const r = simulate({ ...o, cfg: { ...cfg, start: year * 10000 + 101 }, carry });
     r.prevEvents = prev ? prev.events : [];
     return r;
   }
 
-  const Portfolio = { simulate, simulateYear, lotsFor, modalAt, DEFAULT_CFG };
+  /**
+   * Uji portofolio beberapa tahun: tiap tahun clean slate dengan modal yang sama (seperti praktik Galih),
+   * posisi terbuka di akhir tahun dibawa ke tahun berikutnya bila cfg.carry aktif.
+   * Semua keputusan otomatis (backtest murni). Data sinyal dipotong per tahun supaya ringan.
+   * @param o {sig: Map, universe: Set, cfg, rules, fromYear, toYear, modal, progress?}
+   * @returns {years:[{year, pl, ret, realized, unrealEnd, trades, wins, dd, dropped, half}], total, trades}
+   */
+  function simulateRange(o) {
+    const cfg = { ...DEFAULT_CFG, ...o.cfg, modal: [{ d: 0, value: o.modal }], decideFrom: 99999999 };
+    const years = [];
+    const allTrades = [];
+    let carry = [];
+    let prevUnreal = 0;
+    for (let y = o.fromYear; y <= o.toYear; y++) {
+      const a = y * 10000 + 101, b = y * 10000 + 1231;
+      const sig = new Map();
+      let last = 0;
+      for (const [sym, s] of o.sig) {
+        let i0 = 0, i1 = s.date.length;
+        while (i0 < i1 && s.date[i0] < a) i0++;
+        let j = i0;
+        while (j < i1 && s.date[j] <= b) j++;
+        if (j <= i0) continue;
+        const cut = (arr) => (arr ? arr.subarray(i0, j) : arr);
+        const flags = s.flags ? Object.fromEntries(Object.entries(s.flags).map(([k, v]) => [k, cut(v)])) : null;
+        sig.set(sym, { date: cut(s.date), C: cut(s.C), buyRaw: cut(s.buyRaw), buyFirst: cut(s.buyFirst), sellRaw: cut(s.sellRaw), power: cut(s.power), flags });
+        if (s.date[j - 1] > last) last = s.date[j - 1];
+      }
+      if (!last) continue;
+      const universe = new Set([...o.universe].filter((x) => sig.has(x)));
+      const r = simulate({ sig, universe, cfg: { ...cfg, start: a }, rules: o.rules, book: { decisions: {}, manual: [] }, lastDate: last, carry, noPending: true, trackEquity: true });
+      const unrealEnd = r.unrealized;
+      const pl = r.realized + unrealEnd - prevUnreal;
+      // drawdown dari puncak ekuitas tahun ini (titik awal = laba berjalan bawaan)
+      let peak = o.modal + prevUnreal, dd = 0;
+      for (const [, e] of r.equity) { const v = o.modal + e; if (v > peak) peak = v; dd = Math.min(dd, (v / peak - 1) * 100); }
+      const sys = r.trades;
+      years.push({
+        year: y, last, pl, ret: (pl / o.modal) * 100, realized: r.realized, unrealEnd, open: r.positions.length,
+        trades: sys.length, wins: sys.filter((t) => t.pl > 0).length, dd, dropped: r.dropped, half: sys.filter((t) => t.half).length,
+        buys: r.events.filter((e) => (e.type === 'BELI' || e.type === 'TAMBAH') && e.lots > 0).length,
+      });
+      for (const t of sys) allTrades.push({ ...t, year: y, plPct: (t.pl / t.cost) * 100 });
+      carry = cfg.carry ? r.positions.map((p) => ({ sym: p.sym, lots: p.lots, cost: p.cost, porsi: p.porsi, entry: p.entry, buys: p.buys, half: p.half })) : [];
+      prevUnreal = cfg.carry ? unrealEnd : 0;
+      if (!cfg.carry) {
+        // tanpa bawaan: posisi dianggap dijual di Close akhir tahun
+        years[years.length - 1].pl = r.realized + unrealEnd;
+        years[years.length - 1].ret = ((r.realized + unrealEnd) / o.modal) * 100;
+      }
+      if (o.progress) o.progress((y - o.fromYear + 1) / (o.toYear - o.fromYear + 1), `Uji portofolio ${y}`);
+    }
+    const sum = (k) => years.reduce((acc, x) => acc + x[k], 0);
+    const nT = sum('trades');
+    const total = {
+      pl: sum('pl'), avgRet: years.length ? sum('ret') / years.length : 0,
+      compound: (years.reduce((acc, x) => acc * (1 + x.ret / 100), 1) - 1) * 100,
+      trades: nT, winRate: nT ? (sum('wins') / nT) * 100 : 0, worstDD: Math.min(0, ...years.map((x) => x.dd)),
+      posYears: years.filter((x) => x.pl > 0).length, years: years.length, dropped: sum('dropped'), half: sum('half'),
+      avgTrade: allTrades.length ? allTrades.reduce((acc, t) => acc + t.plPct, 0) / allTrades.length : 0,
+    };
+    return { years, total, trades: allTrades };
+  }
+
+  const Portfolio = { simulate, simulateYear, simulateRange, lotsFor, modalAt, DEFAULT_CFG };
   global.Portfolio = Portfolio;
   if (typeof module !== 'undefined' && module.exports) module.exports = Portfolio;
 })(typeof window !== 'undefined' ? window : globalThis);
