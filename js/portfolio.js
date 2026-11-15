@@ -249,13 +249,13 @@
     const positions = [...pos.values()].map((p) => {
       const s = o.sig.get(p.sym);
       const i = at(p.sym, lastDate);
-      const C = i !== undefined ? s.C[i] : lastClose(s, lastDate);
-      const prev = i !== undefined && i > 0 ? s.C[i - 1] : NaN;
+      const C = !s ? (p.lastC || p.cost / (p.lots * 100)) : i !== undefined ? s.C[i] : lastClose(s, lastDate);
+      const prev = s && i !== undefined && i > 0 ? s.C[i - 1] : NaN;
       const value = p.lots * 100 * C;
       const pl = value * (1 - fs) - p.cost;
       return {
         ...p, close: C, chg: ((C - prev) / prev) * 100, avg: p.cost / (p.lots * 100), value, pl, plPct: (pl / p.cost) * 100,
-        provisional: i !== undefined && s.P ? s.P[i] === 1 : false,
+        provisional: s && i !== undefined && s.P ? s.P[i] === 1 : false,
         addPending: pending.find((x) => x.sym === p.sym && x.type === 'ADD') || null,
       };
     }).sort((a, b) => a.entry - b.entry || a.sym.localeCompare(b.sym));
@@ -339,7 +339,22 @@
       }
       if (!last) continue;
       const universe = new Set([...o.universe].filter((x) => sig.has(x)));
+      // posisi bawaan yang sahamnya tidak punya data sama sekali tahun ini (delisting/suspensi panjang):
+      // dianggap keluar di Close terakhir yang diketahui
+      const gone = [];
+      carry = carry.filter((c) => {
+        if (sig.has(c.sym)) return true;
+        const s = o.sig.get(c.sym);
+        let k = s ? s.date.length - 1 : -1;
+        while (k >= 0 && s.date[k] >= a) k--;
+        const price = k >= 0 ? s.C[k] : 0;
+        const pl = c.lots * 100 * price * (1 - cfg.feeSell / 100) - c.cost;
+        gone.push({ sym: c.sym, entry: c.entry, exit: k >= 0 ? s.date[k] : a, pl, cost: c.cost, half: !!c.half, source: 'bawaan (tanpa data)', buys: c.buys, price });
+        return false;
+      });
       const r = simulate({ sig, universe, cfg: { ...cfg, start: a }, rules: o.rules, book: { decisions: {}, manual: [] }, lastDate: last, carry, noPending: true, trackEquity: true });
+      r.trades.push(...gone);
+      r.realized += gone.reduce((acc, t) => acc + t.pl, 0);
       const unrealEnd = r.unrealized;
       const pl = r.realized + unrealEnd - prevUnreal;
       // drawdown dari puncak ekuitas tahun ini (titik awal = laba berjalan bawaan)

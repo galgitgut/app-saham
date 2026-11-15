@@ -509,6 +509,7 @@
   async function runStudy() {
     const E = state.engines.binarsaujana;
     if (!E || !E.features) { status('Formula BinarSaujana di repo data belum versi terbaru (perlu fungsi studi).', true); return; }
+    if (!E.rules || !E.ruleCheck) { status('engine/binarsaujana.js di repo data masih versi lama (belum ada aturan hasil studi). Upload file engine terbaru ke folder engine/, lalu muat ulang app.', true); return; }
     const fromYear = Number($('st-from').value), toYear = Number($('st-to').value);
     if (!(fromYear <= toYear)) { status('Tahun awal harus ≤ tahun akhir.', true); return; }
     const files = state.files.tahun.filter((f) => { const y = Number(f.name.slice(0, 4)); return y >= fromYear - 1 && y <= toYear; });
@@ -577,7 +578,8 @@
       toast(`Studi selesai: ${out.result.trades.length.toLocaleString('id-ID')} trade.`);
     } catch (e) {
       console.error(e);
-      status(`Studi gagal: ${e.message}`, true);
+      const where = (e.stack || '').split('\n').slice(1, 3).map((x) => x.trim().replace(/^at /, '').replace(/https?:\/\/[^/]+\//, '')).join(' ← ');
+      status(`Studi gagal: ${e.message}${where ? ` [${where}]` : ''}`, true);
     }
   }
 
